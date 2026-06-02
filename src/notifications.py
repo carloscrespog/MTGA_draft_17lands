@@ -42,8 +42,8 @@ class Notifications:
 
     def check_for_updates(self) -> bool:
         """Entry point for the class"""
-        if self.check_application():
-            return False
+        #if self.check_application():
+        #    return False
         if self.check_arena_log():
             return True
         self.check_dataset()

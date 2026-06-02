@@ -361,6 +361,20 @@ class FileExtractor(UIProgress):
             else:
                 paths = [os.path.join(
                     self.directory, constants.LOCAL_DOWNLOADS_DATA)]
+        logger.info("🔎 platform=%s", sys.platform)
+        logger.info("📁 self.directory=%r", self.directory)
+        logger.info("📁 LOCAL_DATA_FOLDER_PATH_LINUX=%r", getattr(constants, "LOCAL_DATA_FOLDER_PATH_LINUX", None))
+        logger.info("📦 LOCAL_DOWNLOADS_DATA=%r", getattr(constants, "LOCAL_DOWNLOADS_DATA", None))
+        logger.info("🏷️ LOCAL_DATA_FILE_PREFIX_DATABASE=%r", getattr(constants, "LOCAL_DATA_FILE_PREFIX_DATABASE", None))
+        logger.info("🧭 Computed search paths (%d):", len(paths))
+        for p in paths:
+            logger.info("   - %s (exists=%s)", p, os.path.exists(p))
+            if os.path.exists(p):
+                try:
+                    sample = sorted(os.listdir(p))[:50]
+                    logger.info("     📄 First files: %s", sample)
+                except Exception as e:
+                    logger.error("     💥 listdir failed for %s: %s", p, e)
 
         arena_database_locations = search_local_files(
             paths, [constants.LOCAL_DATA_FILE_PREFIX_DATABASE])

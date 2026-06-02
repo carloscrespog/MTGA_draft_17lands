@@ -9,9 +9,15 @@ from typing import Dict, List, Tuple
 from pydantic import BaseModel, Field
 from src import constants
 from src.logger import create_logger
-
+from src.constants import APPLICATION_VERSION
 logger = create_logger()
 
+USER_AGENT = f"MTGADraftTool/{APPLICATION_VERSION}"
+ACCEPT = "application/json;q=0.9,*/*;q=0.8"
+API_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": ACCEPT,
+}
 LIMITED_SETS_VERSION = 7
 TOTAL_SCRYFALL_SETS = 50
 DATE_SHIFT_OFFSET_DAYS = -30
@@ -124,23 +130,23 @@ class LimitedSets:
         while retries:
             try:
                 url = "https://api.scryfall.com/sets"
-                url_data = urllib.request.urlopen(
-                    url, context=self.context).read()
+                req = urllib.request.Request(url, headers=API_HEADERS)
+                url_data = urllib.request.urlopen(req, context=self.context).read()
                 set_json_data = json.loads(url_data)
 
                 self.__process_scryfall_sets(set_json_data["data"])
 
                 while set_json_data["has_more"]:
                     url = set_json_data["next_page"]
-                    url_data = urllib.request.urlopen(
-                        url, context=self.context).read()
+                    req = urllib.request.Request(url, headers=API_HEADERS)
+                    url_data = urllib.request.urlopen(req, context=self.context).read()
                     set_json_data = json.loads(url_data)
                     self.__process_scryfall_sets(set_json_data["data"])
 
                 break
 
             except Exception as error:
-                logger.error(error)
+                logger.error(f"limited_sets.retrieve_scryfall_sets - {error}")
 
             retries -= 1
 
@@ -155,14 +161,15 @@ class LimitedSets:
         while retries:
             try:
                 url = "https://www.17lands.com/data/filters"
-                url_data = urllib.request.urlopen(url, context=self.context).read()
+                req = urllib.request.Request(url, headers=API_HEADERS)
+                url_data = urllib.request.urlopen(req, context=self.context).read()
                 set_json_data = json.loads(url_data)
 
                 self.__process_17lands_sets(set_json_data)
                 break
 
             except Exception as error:
-                logger.error(error)
+                logger.error(f"limited_sets.retrieve_17lands_sets - {error}")
 
             retries -= 1
 
@@ -248,9 +255,11 @@ class LimitedSets:
     def __append_limited_sets(self, read_sets: SetDictionary) -> SetDictionary:
         '''Create a list of sets using lists collected from 17Lands and Scryfall'''
         temp_dict = SetDictionary(version=LIMITED_SETS_VERSION)
+        alchemy_sets = {}
+
         if self.sets_scryfall.data and self.sets_17lands.data:
             set_codes_to_remove = []
-            alchemy_sets = {}
+
             # Adding the sets that have Scryfall labels
             for set_name, set_fields in self.sets_scryfall.data.items():
                 set_code = set_fields.seventeenlands[0]
@@ -260,7 +269,7 @@ class LimitedSets:
                     else:
                         temp_dict.data[set_name] = self.sets_17lands.data[set_code]
                     set_codes_to_remove.append(set_code)
-            
+
             # Adding the unknown 17Lands sets to the list
             for set_code, set_fields in self.sets_17lands.data.items():
                 if set_code not in set_codes_to_remove:
@@ -268,7 +277,7 @@ class LimitedSets:
                         alchemy_sets[set_code] = set_fields
                     else:
                         temp_dict.data[set_code] = set_fields
-                    
+
         temp_dict.data.update(read_sets.data)
         temp_dict.data.update(alchemy_sets)
         temp_dict.latest_set = read_sets.latest_set

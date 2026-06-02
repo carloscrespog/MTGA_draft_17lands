@@ -172,8 +172,12 @@ DRAFT_LOG_FOLDER = os.path.join(os.getcwd(), "Logs")
 DRAFT_DETECTION_CATCH_ALL = ["Draft", "draft"]
 
 DRAFT_START_STRING_PREMIER = "[UnityCrossThreadLogger]==> Event_Join "
-DRAFT_PICK_STRING_PREMIER = "[UnityCrossThreadLogger]==> Event_PlayerDraftMakePick "
+DRAFT_START_STRING_PREMIER_COURSE = '"CurrentModule":"PlayerDraft"'
+
+DRAFT_PICK_STRING_PREMIER = "[UnityCrossThreadLogger]==> EventPlayerDraftMakePick "
+DRAFT_PICK_STRING_PREMIER_ALT = "[UnityCrossThreadLogger]==> Event_PlayerDraftMakePick "
 DRAFT_PICK_STRING_PREMIER_OLD = "[UnityCrossThreadLogger]==> Draft.MakeHumanDraftPick "
+
 DRAFT_P1P1_STRING_PREMIER = "CardsInPack"
 DRAFT_PACK_STRING_PREMIER = "[UnityCrossThreadLogger]Draft.Notify "
 
@@ -212,11 +216,24 @@ LOCAL_DATA_FOLDER_PATH_OSX = os.path.join(
 LOCAL_DATA_FOLDER_PATH_OSX_STEAM = os.path.join(
     "Library", "Application Support", "Steam", "steamapps", "common", "MTGA", "MTGA_Data"
 )
+
 LOCAL_DATA_FOLDER_PATH_LINUX = next(
     filter(
         os.path.exists,
         [
-            # Steam
+            os.path.join(
+                os.path.expanduser("~"),
+                "snap",
+                "steam",
+                "common",
+                ".local",
+                "share",
+                "Steam",
+                "steamapps",
+                "common",
+                "MTGA",
+                "MTGA_Data",
+            ),
             os.path.join(
                 os.path.expanduser("~"),
                 ".local",
@@ -227,7 +244,6 @@ LOCAL_DATA_FOLDER_PATH_LINUX = next(
                 "MTGA",
                 "MTGA_Data",
             ),
-            # Steam (debian)
             os.path.join(
                 os.path.expanduser("~"),
                 ".steam",
@@ -237,7 +253,6 @@ LOCAL_DATA_FOLDER_PATH_LINUX = next(
                 "MTGA",
                 "MTGA_Data",
             ),
-            # Lutris
             os.path.join(
                 os.path.expanduser("~"),
                 "Games",
@@ -248,7 +263,6 @@ LOCAL_DATA_FOLDER_PATH_LINUX = next(
                 "MTGA",
                 "MTGA_Data",
             ),
-            # Bottles
             os.path.join(
                 os.path.expanduser("~"),
                 ".var",
@@ -497,8 +511,6 @@ CARD_RARITY_UNCOMMON = "uncommon"
 CARD_RARITY_RARE = "rare"
 CARD_RARITY_MYTHIC = "mythic"
 
-# Dictionaries
-# Used to identify the limited type based on log string
 LIMITED_TYPES_DICT = {
     LIMITED_TYPE_STRING_DRAFT_PREMIER: LIMITED_TYPE_DRAFT_PREMIER_V1,
     LIMITED_TYPE_STRING_DRAFT_QUICK: LIMITED_TYPE_DRAFT_QUICK,
@@ -722,14 +734,6 @@ CARD_TYPE_DICT = {
 
 TABLE_PROPORTIONS = [(1,), (0.75, 0.25), (0.60, 0.20, 0.20), (0.46, 0.18, 0.18, 0.18)]
 
-# TODO: Where are these values from?
-# My understanding is this array is an array for values for each of the first six packs
-# The four values are used in a numpy polyval with the ALSA
-# Meaning if you have a card with an ALSA of 7.2 in pack #1, then your wheel % would be
-# -0.46*(7.2^3) + 7.97*(7.2^2) - 27.43*7.2 + 26.61 = 70.6% (69.4% in MTGAZone article)
-# For pack #6: 0.25*(7.2^3) +-2.65*(7.2^2) + 9.76*7.2 - 11.21 = 15.0% (13.0% in MTGAZone article)
-# The numbers seem reasonable, but don't know if it is generalized from a set's draft data?
-# https://mtgazone.com/how-to-wheel-in-drafts/ is the best I could find online and the percentages are close
 WHEEL_COEFFICIENTS = [
     [-0.46, 7.97, -27.43, 26.61],
     [-0.33, 6.31, -23.12, 23.86],

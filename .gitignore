@@ -1,6 +1,10 @@
 # Ignore files created by the app
 config.json
 
+# Ignore local-only files
+mtgadrafttool.zip
+run_mtga_draft_tool.bat
+
 # Ignore folders created by the app
 Debug/
 Downloads/
