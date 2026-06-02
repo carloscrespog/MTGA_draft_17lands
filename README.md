@@ -74,26 +74,31 @@ Magic: The Gathering Arena draft tool that utilizes 17Lands data.
   - [Linux](https://wiki.python.org/moin/BeginnersGuide/Download#Linux).
 - **Step 3:** Confirm that you're running Python 3.12 by opening the terminal, entering ```python --version```, and checking for a ```Python 3.12.*``` result.
 - **Step 4:** Install the Python package installer Pip by entering ```python -m ensurepip --upgrade```.
-- **Step 5:** Open the terminal and install the Python dependencies by entering ```pip install -r requirements.txt```.
-- **Step 6:**
+- **Step 5:** From the repository folder, create a virtual environment by entering ```python -m venv .venv```.
+- **Step 6:** Activate the virtual environment.
+  - **Windows Command Prompt:** Enter ```.venv\Scripts\activate.bat```.
+  - **Windows PowerShell:** Enter ```.venv\Scripts\Activate.ps1```.
+  - **Mac/Linux:** Enter ```source .venv/bin/activate```.
+- **Step 7:** Install the Python dependencies in the virtual environment by entering ```python -m pip install -r requirements.txt```.
+- **Step 8:**
   - (Mac Only) Install web certificates by going to `/Applications/Python 3.##/` and double-clicking the file `Install Certificates.command`.
   - (Linux only) [Install Tk](https://tkdocs.com/tutorial/install.html#installlinux)
-- **Step 7:** In Arena, go to Adjust Options, Account, and then check the Detailed Logs (Plugin Support) check box.
-- **Step 8:** Start the application by opening the terminal and entering ```python main.py```.
-- **Step 9:** If the application asks you for the location of the Arena player log, then click `File->Read Player.log` and select the log file from one of the following locations:
+- **Step 9:** In Arena, go to Adjust Options, Account, and then check the Detailed Logs (Plugin Support) check box.
+- **Step 10:** Start the application from the activated virtual environment by entering ```python main.py```.
+- **Step 11:** If the application asks you for the location of the Arena player log, then click `File->Read Player.log` and select the log file from one of the following locations:
   - **Windows:** {drive}/Users/{username}/AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log
   - **Mac:** {username}/Library/Logs/Wizards Of The Coast/MTGA/Player.log
   - **Bottles (Linux):** /home/{username}/.var/app/com.usebottles.bottles/data/bottles/bottles/MTG-Arena/drive_c/users/{username}/AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log
   - **Lutris (Linux):** /home/{username}/Games/magic-the-gathering-arena/drive_c/users/{username}/AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log
-- **Step 10:** (Mac Only) Set Arena to window mode.
-- **Step 11:** Download the sets you plan to use (`Data->Download Dataset`).
+- **Step 12:** (Mac Only) Set Arena to window mode.
+- **Step 13:** Download the sets you plan to use (`Data->Download Dataset`).
   - Event datasets can be used for different events (e.g., the premier draft dataset can be used for a sealed event).
   - Select `Arena Cube` and adjust the start date to download the data from the most recent Arena Cube event.
   - Quick draft players should consider using the premier draft dataset when quick draft initially becomes available.
-- **Step 12:** Configure the tool through the [Settings window](#settings).
+- **Step 14:** Configure the tool through the [Settings window](#settings).
   - Users that are new to 17Lands might find the [Win Rate Grades](#card-logic) (`Win Rate Format: Grade`) more valuable than the win rate percentages.
   - The [UI Size](#settings) setting can be used to adjust the size of the image and text.
-- **Step 13:** Start the draft in Arena.
+- **Step 15:** Start the draft in Arena.
   - The Arena log doesn't list P1P1 for premier and traditional drafts until after P1P2.
   - Pressing the `Refresh` button will help OCR identify the cards in your first pack. For more information on this feature, see [The P1P1 Solution](#the-p1p1-solution).
   - The [Card Compare](#menu-features) feature can be used as a substitute for P1P1.
