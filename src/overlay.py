@@ -19,6 +19,7 @@ import io
 import math
 import argparse
 import webbrowser
+from datetime import datetime
 from os import stat, path
 from pynput.keyboard import Listener, KeyCode
 from PIL import Image, ImageTk, ImageFont
@@ -34,7 +35,7 @@ from src.utils import open_file
 from src import constants
 from src.logger import create_logger
 from src.scaled_window import ScaledWindow, identify_safe_coordinates
-from src.tier_list import TierWindow, TierList
+from src.tier_list import TierWindow, TierList, normalize_collection_date
 from src.download_dataset import DownloadDatasetWindow
 from src.notifications import Notifications
 from src.card_logic import (
@@ -1704,10 +1705,68 @@ class Overlay(ScaledWindow):
                 )
                 self.deck_filter_list.append(key)
 
+            self.__update_event_column_defaults()
+
         except Exception as error:
             logger.error(error)
 
         self.__control_trace(True)
+
+    def __update_event_column_defaults(self):
+        """Select event-specific column defaults after column options are refreshed."""
+        event_set, event_type = self.draft.retrieve_current_limited_event()
+        if (
+            event_set != "MSH"
+            or event_type != constants.LIMITED_TYPE_STRING_DRAFT_PREMIER
+        ):
+            return
+
+        for option, value in self.main_options_dict.items():
+            tier_list = self.tier_data.get(value)
+            if tier_list and tier_list.meta.set == "MSH":
+                self.column_6_selection.set(option)
+                if self.configuration.settings.column_6 != value:
+                    self.configuration.settings.column_6 = value
+                    write_configuration(self.configuration)
+                break
+
+    def __log_loaded_tier_list(self, event_set):
+        """Log the newest tier list loaded for the detected event set."""
+        for tier_list in self.tier_data.values():
+            if not tier_list or tier_list.meta.set != event_set:
+                continue
+
+            collection_date, date_value = normalize_collection_date(
+                tier_list.meta.collection_date
+            )
+            if date_value == datetime.min:
+                days_ago = "unknown"
+            else:
+                age = datetime.now() - date_value
+                minutes = max(int(age.total_seconds() // 60), 0)
+                hours = minutes // 60
+                days = hours // 24
+                if minutes < 60:
+                    days_ago = (
+                        f"{minutes} minute ago"
+                        if minutes == 1
+                        else f"{minutes} minutes ago"
+                    )
+                elif hours < 24:
+                    days_ago = (
+                        f"{hours} hour ago" if hours == 1 else f"{hours} hours ago"
+                    )
+                else:
+                    days_ago = f"{days} day ago" if days == 1 else f"{days} days ago"
+            logger.info(
+                "Tier list loaded: %s (%s, updated %s)",
+                tier_list.meta.label,
+                collection_date,
+                days_ago,
+            )
+            return
+
+        logger.info("No tier list loaded for %s", event_set)
 
     def __default_settings_callback(self, *_):
         """Callback function that's called when the Default Settings button is pressed"""
@@ -1777,6 +1836,8 @@ class Overlay(ScaledWindow):
                 mean,
                 std,
             )
+            event_set, _ = self.draft.retrieve_current_limited_event()
+            self.__log_loaded_tier_list(event_set)
 
         use_ocr = (
             source == Source.REFRESH and self.configuration.settings.p1p1_ocr_enabled

@@ -35,6 +35,21 @@ logger = create_logger()
 if not os.path.exists(TIER_FOLDER):
     os.makedirs(TIER_FOLDER)
 
+
+def normalize_collection_date(date_str: str):
+    """Return a normalized date string and sortable datetime for tier metadata."""
+    for date_format in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%m/%d/%Y %H:%M:%S",
+    ):
+        try:
+            date_value = datetime.strptime(date_str, date_format)
+            return date_value.strftime("%Y-%m-%d %H:%M:%S"), date_value
+        except (TypeError, ValueError):
+            continue
+    return date_str, datetime.min
+
 class Meta(BaseModel):
     """Metadata for a tier list."""
     collection_date: str = ""
@@ -166,11 +181,7 @@ class TierList(BaseModel):
             file_location = os.path.join(TIER_FOLDER, file)
             try:
                 name_segments = file.split("_")
-                if (
-                    len(name_segments) != 3 or
-                    name_segments[0] != TIER_FILE_PREFIX or
-                    (code and code not in name_segments[1])
-                ):
+                if len(name_segments) != 3 or name_segments[0] != TIER_FILE_PREFIX:
                     continue
 
                 result = TierList.from_file(file_location)
@@ -178,22 +189,24 @@ class TierList(BaseModel):
                     logger.error(f"Invalid tier list at {file_location}")
                     continue
 
-                date_str = result.meta.collection_date
-                # Normalize date format if needed
-                try:
-                    dt = datetime.strptime(date_str, "%m/%d/%Y %H:%M:%S")
-                    date_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-                except Exception:
-                    pass  # Assume already normalized
+                if code and result.meta.set != code:
+                    continue
+
+                date_str, date_value = normalize_collection_date(
+                    result.meta.collection_date
+                )
 
                 file_list.append((
                     result.meta.set,
                     result.meta.label,
                     date_str,
-                    file
+                    file,
+                    date_value
                 ))
             except Exception as error:
                 logger.error(f"Failed to load tier list from {file_location}: {error}")
+        file_list.sort(key=lambda x: x[4], reverse=True)
+        file_list = [file[:4] for file in file_list]
         return file_list
 
     @classmethod
