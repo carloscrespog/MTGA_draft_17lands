@@ -14,7 +14,20 @@ from src.constants import GRADE_ORDER_DICT, LETTER_GRADE_NA
 TIER_FOLDER = os.path.join(os.getcwd(), "Tier")
 TIER_FILE_PREFIX = "Tier"
 TIER_URL_17LANDS = "https://www.17lands.com/tier_list/"
+TIER_URL_LLU_MSH = "https://limitedlevelups.com/api/tier-list/1c86af8656f7432c83d9f9bb9c92f9df"
+TIER_FILE_LLU_MSH = "Tier_MSH_1782313253.txt"
 TIER_VERSION = 3
+LLU_HEADERS = {
+    "accept": "*/*",
+    "accept-language": "en-GB,en;q=0.9,es;q=0.8,es-ES;q=0.7,en-US;q=0.6",
+    "cache-control": "no-cache",
+    "pragma": "no-cache",
+    "referer": "https://limitedlevelups.com/tier-list/MSH",
+    "user-agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+    ),
+}
 
 logger = create_logger()
 
@@ -74,6 +87,37 @@ class TierList(BaseModel):
             return None
 
     @classmethod
+    def from_limited_levelups_api(cls, url: str = TIER_URL_LLU_MSH):
+        """Fetch a tier list from the Limited Level-Ups API."""
+        try:
+            response = requests.get(url, headers=LLU_HEADERS, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            meta = Meta(
+                collection_date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                label=data.get("name", ""),
+                set=data.get("expansion", ""),
+                version=TIER_VERSION,
+                url=url
+            )
+            ratings = {}
+            for card in data.get("ratings", []):
+                name = card.get("name", "")
+                if not name:
+                    continue
+                tier = card.get("tier", "").ljust(2)
+                if tier not in GRADE_ORDER_DICT:
+                    tier = LETTER_GRADE_NA
+                ratings[name] = Rating(
+                    rating=tier,
+                    comment=card.get("comment", "")
+                )
+            return cls(meta=meta, ratings=ratings)
+        except (requests.RequestException, ValueError, KeyError, TypeError) as e:
+            logger.error(f"Failed to fetch tier list from Limited Level-Ups API: {e}")
+            return None
+
+    @classmethod
     def from_file(cls, file_path: str):
         """Load a tier list from a local file."""
         try:
@@ -96,8 +140,20 @@ class TierList(BaseModel):
         try:
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(self.model_dump(), f, ensure_ascii=False, indent=4)
+            return True
         except OSError as e:
             logger.error("Failed to save tier list to %s: %s", file_path, e)
+            return False
+
+    @classmethod
+    def update_limited_levelups_msh(cls):
+        """Update the local MSH tier file from the Limited Level-Ups API."""
+        tier_list = cls.from_limited_levelups_api()
+        if tier_list is None:
+            return False
+
+        file_path = os.path.join(TIER_FOLDER, TIER_FILE_LLU_MSH)
+        return tier_list.to_file(file_path)
 
     @classmethod
     def retrieve_files(cls, code: str = ""):
@@ -253,6 +309,11 @@ class TierWindow(ScaledWindow):
                 command=self.__download_tier_list,
                 text="DOWNLOAD"
             )
+            self._update_llu_button = Button(
+                self.window,
+                command=self.__update_limited_levelups_tier_list,
+                text="UPDATE MSH FROM LLU"
+            )
 
             # Add placeholder text to the entry fields
             self.__add_placeholder(self._label_entry, "Enter Label Here!")
@@ -265,7 +326,8 @@ class TierWindow(ScaledWindow):
             url_label.grid(row=2, column=0, sticky="nsew")
             self._url_entry.grid(row=2, column=1, sticky="nsew")
             self._download_button.grid(row=3, column=0, columnspan=2, sticky="nsew")
-            self._status_label.grid(row=4, column=0, columnspan=2, sticky="nsew")
+            self._update_llu_button.grid(row=4, column=0, columnspan=2, sticky="nsew")
+            self._status_label.grid(row=5, column=0, columnspan=2, sticky="nsew")
 
             self.window.grid_columnconfigure(0, minsize=self._scale_value(80), weight=0)
             self.window.grid_columnconfigure(1, weight=1)
@@ -353,6 +415,29 @@ class TierWindow(ScaledWindow):
             return
         finally:
             self._download_button.config(state=tkinter.NORMAL)
+            self.window.update()
+
+    def __update_limited_levelups_tier_list(self):
+        """Download the Limited Level-Ups MSH tier list and refresh the window."""
+        try:
+            self._status_text.set("Updating Limited Level-Ups Tier List")
+            self._download_button.config(state=tkinter.DISABLED)
+            self._update_llu_button.config(state=tkinter.DISABLED)
+            self.window.update()
+
+            if not TierList.update_limited_levelups_msh():
+                self._status_text.set("Failed to update Limited Level-Ups tier list")
+                return
+
+            self.__update_tier_table()
+            self.update_callback()
+            self._status_text.set("Limited Level-Ups Tier List Updated")
+        except Exception as error:
+            logger.error(f"Limited Level-Ups tier list update failed: {error}")
+            self._status_text.set("Limited Level-Ups Tier List Update Failed")
+        finally:
+            self._download_button.config(state=tkinter.NORMAL)
+            self._update_llu_button.config(state=tkinter.NORMAL)
             self.window.update()
 
     def __update_tier_table(self):
