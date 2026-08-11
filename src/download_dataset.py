@@ -33,10 +33,12 @@ class DownloadArgs:
     list_box: tkinter.Widget
     sets: dict
     status: tkinter.StringVar
+    extra_button: Button = None
     game_count: int = 0
     version: str = DATA_SET_VERSION_3
     color_ratings: dict = None
     enable_rate_limit: bool = True
+    premium_download: bool = False
 
 
 @dataclass
@@ -230,6 +232,7 @@ class DownloadDatasetWindow(ScaledWindow):
                 command=lambda: self.__add_set(
                     DownloadArgs(
                         button=add_button,
+                        extra_button=premium_button,
                         progress=progress,
                         list_box=self.list_box,
                         sets=sets,
@@ -245,6 +248,28 @@ class DownloadDatasetWindow(ScaledWindow):
                 ),
                 text="DOWNLOAD",
             )
+            premium_button = Button(
+                self.window,
+                command=lambda: self.__add_set(
+                    DownloadArgs(
+                        button=premium_button,
+                        extra_button=add_button,
+                        progress=progress,
+                        list_box=self.list_box,
+                        sets=sets,
+                        status=status_text,
+                        draft_set=set_value,
+                        draft=event_value,
+                        start=start_entry,
+                        end=end_entry,
+                        user_group=group_value,
+                        game_threshold=threshold_entry,
+                        game_count=0,
+                        premium_download=True,
+                    )
+                ),
+                text="DOWNLOAD PREMIUM",
+            )
             self._widget_refs["add_button"] = add_button
 
             event_separator = Separator(self.window, orient="vertical")
@@ -255,8 +280,9 @@ class DownloadDatasetWindow(ScaledWindow):
             notice_label.grid(row=0, column=0, columnspan=16, sticky="nsew")
             list_box_frame.grid(row=1, column=0, columnspan=16, sticky="nsew")
             add_button.grid(row=3, column=0, columnspan=16, sticky="nsew")
-            progress.grid(row=4, column=0, columnspan=16, sticky="nsew")
-            status_label.grid(row=5, column=0, columnspan=16, sticky="nsew")
+            premium_button.grid(row=4, column=0, columnspan=16, sticky="nsew")
+            progress.grid(row=5, column=0, columnspan=16, sticky="nsew")
+            status_label.grid(row=6, column=0, columnspan=16, sticky="nsew")
 
             set_label.grid(row=2, column=0, sticky="nsew")
             set_entry.grid(row=2, column=1, sticky="nsew")
@@ -407,28 +433,40 @@ class DownloadDatasetWindow(ScaledWindow):
             for error_string in error_list:
                 logger.error(error_string)
 
-            download_args.status.set("Downloading Color Ratings")
-            self.window.update()
-            if not download_args.color_ratings:
-                download_success, game_count = (
-                    extractor.retrieve_17lands_color_ratings()
+            if download_args.premium_download:
+                extractor.set_color_ratings({})
+                download_success = True
+                game_count = 0
+            else:
+                download_args.status.set("Downloading Color Ratings")
+                self.window.update()
+                if not download_args.color_ratings:
+                    download_success, game_count = (
+                        extractor.retrieve_17lands_color_ratings()
+                    )
+                else:
+                    game_count = download_args.game_count
+                    extractor.set_game_count(game_count)
+                    extractor.set_color_ratings(download_args.color_ratings)
+                    download_success = True
+
+                if not self._handle_game_count_and_notify(
+                    download_success, game_count, file_list, download_args
+                ):
+                    self._set_download_buttons_state(download_args, "normal")
+                    self.window.update()
+                    return
+
+            if download_args.premium_download:
+                download_success, result_string, temp_size = (
+                    extractor.download_premium_card_data(
+                        self.configuration.card_data.database_size
+                    )
                 )
             else:
-                game_count = download_args.game_count
-                extractor.set_game_count(game_count)
-                extractor.set_color_ratings(download_args.color_ratings)
-                download_success = True
-
-            if not self._handle_game_count_and_notify(
-                download_success, game_count, file_list, download_args
-            ):
-                download_args.button["state"] = "normal"
-                self.window.update()
-                return
-
-            download_success, result_string, temp_size = extractor.download_card_data(
-                self.configuration.card_data.database_size
-            )
+                download_success, result_string, temp_size = extractor.download_card_data(
+                    self.configuration.card_data.database_size
+                )
             if not download_success:
                 self._handle_failure(download_args, result_string)
                 return
@@ -444,7 +482,7 @@ class DownloadDatasetWindow(ScaledWindow):
             self.__update_set_table(download_args.list_box, download_args.sets)
             self.update_event_files_callback()
             download_args.status.set("Download Complete")
-            download_args.button["state"] = "normal"
+            self._set_download_buttons_state(download_args, "normal")
             self.configuration.card_data.database_size = temp_size
             self.configuration.card_data.latest_dataset = dataset_name
             write_configuration(self.configuration)
@@ -464,14 +502,14 @@ class DownloadDatasetWindow(ScaledWindow):
             return False
         confirm = tkinter.messagebox.askyesno(
             title="Download",
-            message=f"Are you sure that you want to download the {args.draft_set.get()} {args.draft.get()} dataset?",
+            message=f"Are you sure that you want to download the {args.draft_set.get()} {args.draft.get()} {'premium ' if args.premium_download else ''}dataset?",
         )
         return confirm
 
     def _setup_extractor(self, extractor, download_args):
         download_args.status.set("Starting Download Process")
         extractor.clear_data()
-        download_args.button["state"] = "disabled"
+        self._set_download_buttons_state(download_args, "disabled")
         download_args.progress["value"] = 0
         self.window.update()
         extractor.select_sets(download_args.sets[download_args.draft_set.get()])
@@ -532,11 +570,16 @@ class DownloadDatasetWindow(ScaledWindow):
     def _handle_failure(self, args, result_string):
         args.status.set("Download Failed")
         self.window.update()
-        args.button["state"] = "normal"
+        self._set_download_buttons_state(args, "normal")
         message_string = f"Download Failed: {result_string}"
         tkinter.messagebox.showwarning(title="Error", message=message_string)
         self.window.update()
         logger.error(message_string)
+
+    def _set_download_buttons_state(self, args, state):
+        args.button["state"] = state
+        if args.extra_button:
+            args.extra_button["state"] = state
 
     def __update_set_table(self, list_box, sets):
         """Updates the set list in the Set View table."""

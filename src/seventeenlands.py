@@ -26,6 +26,17 @@ logger = create_logger()
 
 
 class Seventeenlands:
+    def build_premium_card_data_url(self, set_code, draft, user_group):
+        user_group_param = (
+            ""
+            if user_group == LIMITED_USER_GROUP_ALL
+            else f"&user_group={user_group.lower()}"
+        )
+        return (
+            f"https://www.17lands.com/api/card_data?expansion={set_code}"
+            f"&event_type={draft}{user_group_param}&time_period=ALL_TIME"
+        )
+
     def build_card_ratings_url(
         self, set_code, draft, start_date, end_date, user_group, color
     ):
@@ -58,6 +69,15 @@ class Seventeenlands:
         self.process_card_ratings(
             normalize_color_string(colors), response.json(), card_data
         )
+
+    def download_premium_card_data(self, set_code, draft, user_group, card_data):
+        url = self.build_premium_card_data_url(set_code, draft, user_group)
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        payload = response.json()
+        cards = payload.get("data", payload if isinstance(payload, list) else [])
+        self.process_card_ratings(FILTER_OPTION_ALL_DECKS, cards, card_data)
+        return cards
 
     def download_color_ratings(
         self,

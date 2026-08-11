@@ -56,3 +56,40 @@ def test_add_set_parses_threshold():
 
         _, kwargs = mock_extractor_cls.call_args
         assert kwargs["threshold"] == COLOR_WIN_RATE_GAME_COUNT_THRESHOLD_DEFAULT
+
+
+def test_add_set_premium_uses_premium_download_path():
+    root = MagicMock()
+    sets = MagicMock()
+    config = MagicMock()
+    config.card_data.last_check = 0
+    config.card_data.database_size = 0
+
+    window = DownloadDatasetWindow(root, sets, 1.0, {}, config, auto_enter=False)
+    window.window = MagicMock()
+    window.__update_set_table = MagicMock()
+    window.update_event_files_callback = MagicMock()
+
+    mock_args = MagicMock()
+    mock_args.enable_rate_limit = False
+    mock_args.premium_download = True
+    mock_args.color_ratings = None
+    mock_args.game_threshold.get.return_value = "5000"
+    mock_args.list_box = MagicMock()
+    mock_args.sets = {}
+
+    with patch("src.download_dataset.FileExtractor") as mock_extractor_cls, patch(
+        "src.download_dataset.write_configuration"
+    ):
+        extractor = mock_extractor_cls.return_value
+        extractor.download_premium_card_data.return_value = (True, "", 123)
+        extractor.export_card_data.return_value = "MSH_PremierDraft_Top_Data.json"
+        window._setup_extractor = MagicMock()
+        window._DownloadDatasetWindow__update_set_table = MagicMock()
+
+        window._DownloadDatasetWindow__add_set(mock_args)
+
+    extractor.set_color_ratings.assert_called_once_with({})
+    extractor.retrieve_17lands_color_ratings.assert_not_called()
+    extractor.download_card_data.assert_not_called()
+    extractor.download_premium_card_data.assert_called_once_with(0)

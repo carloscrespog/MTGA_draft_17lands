@@ -93,6 +93,17 @@ def test_build_card_ratings_url(seventeenlands):
     assert url == expected_url
 
 
+def test_build_premium_card_data_url(seventeenlands):
+    url = seventeenlands.build_premium_card_data_url(
+        "MSH", "PremierDraft", constants.LIMITED_USER_GROUP_TOP
+    )
+
+    assert url == (
+        "https://www.17lands.com/api/card_data?expansion=MSH"
+        "&event_type=PremierDraft&user_group=top&time_period=ALL_TIME"
+    )
+
+
 @patch("src.seventeenlands.requests.get")
 def test_download_card_ratings(mock_get, seventeenlands):
     """
@@ -132,6 +143,35 @@ def test_download_card_ratings(mock_get, seventeenlands):
     ]
     assert len(card_data["Test Card"][constants.DATA_SECTION_RATINGS]) == 1
     mock_get.assert_called_once()
+
+
+@patch("src.seventeenlands.requests.get")
+def test_download_premium_card_data_processes_wrapped_payload(mock_get, seventeenlands):
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "copyright": "17Lands",
+        "data": [
+            {
+                "name": "King T'Challa",
+                "url": "https://cards.example/card.jpg",
+                "ever_drawn_win_rate": 0.6749,
+                "game_count": 2030,
+            }
+        ],
+    }
+    mock_get.return_value = mock_response
+    card_data = {}
+
+    cards = seventeenlands.download_premium_card_data(
+        "MSH", "PremierDraft", constants.LIMITED_USER_GROUP_TOP, card_data
+    )
+
+    assert cards == mock_response.json.return_value["data"]
+    ratings = card_data["King T'Challa"][constants.DATA_SECTION_RATINGS][0][
+        constants.FILTER_OPTION_ALL_DECKS
+    ]
+    assert ratings[constants.DATA_FIELD_GIHWR] == 67.49
+    assert ratings[constants.DATA_FIELD_NGP] == 2030
 
 
 @patch("src.seventeenlands.requests.get")

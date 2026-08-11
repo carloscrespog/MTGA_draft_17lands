@@ -269,6 +269,22 @@ class FileExtractor(UIProgress):
 
         return result, result_string, temp_size
 
+    def download_premium_card_data(self, database_size):
+        '''Wrapper function for building a set file from the all-time 17Lands card_data endpoint'''
+        result = False
+        result_string = ""
+        temp_size = 0
+        try:
+            result, result_string, temp_size = self._download_premium_expansion(
+                database_size
+            )
+
+        except Exception as error:
+            logger.error(error)
+            result_string = error
+
+        return result, result_string, temp_size
+
     def _download_expansion(self, database_size):
         ''' Function that performs the following steps:
             1. Build a card data file from local Arena files (stored as temp_card_data.json in the Temp folder)
@@ -304,6 +320,52 @@ class FileExtractor(UIProgress):
                 self._assemble_set(matching_only)
                 check_set_data(
                     self.combined_data["card_ratings"], self.card_ratings)
+                break
+
+        except Exception as error:
+            logger.error(error)
+            result_string = error
+
+        return result, result_string, temp_size
+
+    def _download_premium_expansion(self, database_size):
+        '''Build a set file using the 17Lands all-time card_data endpoint.'''
+        result = False
+        result_string = ""
+        temp_size = 0
+        try:
+            while True:
+                self._update_progress(5, True)
+                result, result_string, temp_size = self._retrieve_local_arena_data(
+                    database_size
+                )
+                if not result:
+                    break
+
+                self._update_progress(10, True)
+                self._update_status("Collecting 17Lands Premium Data")
+
+                if not self.retrieve_17lands_premium_data(
+                    self.selected_sets.seventeenlands
+                ):
+                    result = False
+                    result_string = "Couldn't Collect 17Lands Premium Data"
+                    break
+
+                matching_only = (
+                    True
+                    if constants.SET_SELECTION_ALL in self.selected_sets.arena
+                    else False
+                )
+
+                if not matching_only:
+                    self._initialize_17lands_data()
+
+                self._update_status("Building Data Set File")
+                self._assemble_set(matching_only)
+                check_set_data(
+                    self.combined_data["card_ratings"], self.card_ratings
+                )
                 break
 
         except Exception as error:
@@ -710,6 +772,56 @@ class FileExtractor(UIProgress):
                 else:
                     break
                 time.sleep(constants.CARD_RATINGS_INTER_DELAY_SECONDS)
+
+        return result
+
+    def retrieve_17lands_premium_data(self, sets):
+        '''Use the 17Lands all-time card_data endpoint to download card ratings.'''
+        self.card_ratings = {}
+        result = False
+        max_card_game_count = 0
+        seventeenlands = Seventeenlands()
+        for set_code in sets:
+            retry = constants.CARD_RATINGS_ATTEMPT_MAX
+            result = False
+            while retry:
+                try:
+                    self._update_status("Collecting All-Time 17Lands Data")
+                    cards = seventeenlands.download_premium_card_data(
+                        set_code, self.draft, self.user_group, self.card_ratings
+                    )
+                    max_card_game_count = max(
+                        [max_card_game_count]
+                        + [
+                            int(card.get(constants.DATA_FIELD_17LANDS_NGP) or 0)
+                            for card in cards
+                        ]
+                    )
+                    result = True
+                    break
+                except Exception as error:
+                    logger.error(error)
+                    retry -= 1
+
+                    if retry:
+                        attempt_count = constants.CARD_RATINGS_ATTEMPT_MAX - retry
+                        self._update_status(f"""Collecting All-Time 17Lands Data - Request Failed ({attempt_count}/{constants.CARD_RATINGS_ATTEMPT_MAX}) - Retry in {constants.CARD_RATINGS_BACKOFF_DELAY_SECONDS} seconds""")
+                        time.sleep(constants.CARD_RATINGS_BACKOFF_DELAY_SECONDS)
+
+            if result:
+                self._update_progress(3, True)
+            else:
+                break
+            time.sleep(constants.CARD_RATINGS_INTER_DELAY_SECONDS)
+
+        if result:
+            self.combined_data["meta"]["source"] = "17Lands Premium"
+            self.combined_data["meta"]["time_period"] = "ALL_TIME"
+            self.combined_data["meta"]["game_count_note"] = (
+                "Premium endpoint does not provide an overall draft game count; "
+                "this is the largest per-card game_count."
+            )
+            self.set_game_count(max_card_game_count)
 
         return result
 

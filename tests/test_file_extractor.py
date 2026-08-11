@@ -155,3 +155,30 @@ def test_file_extractor_default_threshold():
     """Verify FileExtractor defaults to the constant if no threshold is provided."""
     extractor = FileExtractor(None, None, None, None)
     assert extractor.threshold == COLOR_WIN_RATE_GAME_COUNT_THRESHOLD_DEFAULT
+
+
+@patch("src.file_extractor.Seventeenlands")
+def test_retrieve_17lands_premium_data_sets_metadata(
+    mock_seventeenlands_cls, file_extractor
+):
+    mock_sl_instance = mock_seventeenlands_cls.return_value
+    mock_sl_instance.download_premium_card_data.return_value = [
+        {"name": "Card One", constants.DATA_FIELD_17LANDS_NGP: 10},
+        {"name": "Card Two", constants.DATA_FIELD_17LANDS_NGP: 15},
+    ]
+
+    file_extractor.selected_sets = MagicMock()
+    file_extractor.selected_sets.seventeenlands = ["MSH"]
+
+    assert file_extractor.retrieve_17lands_premium_data(["MSH"])
+
+    mock_sl_instance.download_premium_card_data.assert_called_once_with(
+        "MSH",
+        "PremierDraft",
+        constants.LIMITED_USER_GROUP_ALL,
+        file_extractor.card_ratings,
+    )
+    assert file_extractor.combined_data["meta"]["source"] == "17Lands Premium"
+    assert file_extractor.combined_data["meta"]["time_period"] == "ALL_TIME"
+    assert "game_count_note" in file_extractor.combined_data["meta"]
+    assert file_extractor.combined_data["meta"]["game_count"] == 15
