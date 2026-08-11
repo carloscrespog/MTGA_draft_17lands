@@ -14,15 +14,49 @@ from src.constants import GRADE_ORDER_DICT, LETTER_GRADE_NA
 TIER_FOLDER = os.path.join(os.getcwd(), "Tier")
 TIER_FILE_PREFIX = "Tier"
 TIER_URL_17LANDS = "https://www.17lands.com/tier_list/"
-TIER_URL_LLU_MSH = "https://limitedlevelups.com/api/tier-list/1c86af8656f7432c83d9f9bb9c92f9df"
-TIER_FILE_LLU_MSH = "Tier_MSH_1782313253.txt"
+TIER_URL_LLU = "https://limitedlevelups.com/api/tier-list/"
+LLU_TIER_LIST_IDS = {
+    "HOB": "528d1c45d1f04b59abac2a897a8928c8",
+    "MSH": "1c86af8656f7432c83d9f9bb9c92f9df",
+    "SOS": "e195401b1eaa48e3b5d6670e0ae338e9",
+    "TMT": "fd5499ae88854ca0ac1bc2ad95ade9b2",
+    "ECL": "1745e64176864bb2bec132cbd601b604",
+    "TLA": "efdfa8408fb448be846ac06f9d9192ff",
+    "SPM": "4f9e6dc9c48c4052805dcfa65568c964",
+    "EOE": "4f34ccc070464c6c90f85c78972ee6ac",
+    "FIN": "90be207ac0e34b8ea20ae396c434cbae",
+    "TDM": "dd9c5b6db6b94ce0bbf3fd285625ceb9",
+    "DFT": "b0f9dbffd24843d5b8b693f30bc8b1e9",
+    "FDN": "597d29e75d704ecf9877fc0e4b2c4116",
+    "DSK": "edec3f514f264753bf4a46a8a2fc7d82",
+    "BLB": "6057e51272c94a7cb304bd511b7c3bcf",
+    "MH3": "1775dc0b2fed451cbc5ad4441e2ab9c3",
+    "WOE": "87b40a05e0974eafa368be44e1d3e0c4",
+    "MOM": "a7daeb6a90b246e895c8634e34734090",
+    "VOW": "ac2ca9722737412ba0c4c4c4b2e28598",
+    "STX": "a2753035da8646038f55b7321de1dfc9",
+    "PIO": "22b77386e0354d84827e732c226ebc91",
+    "MKM": "a5c17edddaea4680a28126dae2a5178f",
+    "LCI": "b8dad7059ff24da28da636a1c50da7e8",
+    "LTR": "aa685e825b12489a83f081dec8dc308d",
+    "ONE": "959517c42af04b909ddb6456904b7001",
+    "BRO": "b8d4ba9d1bad49828bfa6371f6b4f09b",
+    "DMU": "e12ee0b1fadc4ab7b8de4c3730878a90",
+    "HBG": "d24c2d28b6aa4146912b2ca92c503fe1",
+    "SNC": "8513f3fa48f140c0a4792862f530dea9",
+    "NEO": "0b2b04f23e104ddba3501cd009385d60",
+    "MID": "ef928c7c17bb4f57b09a75be5daf7df9",
+    "AFR": "1d901171375f4cff9834c751667c4254",
+    "IKO": "db593297907e41af93eedd994e26da28",
+    "ELD": "30588ade239246d0ab12393d00dc801a",
+    "KTK": "a6346d2850ef45918508db61d057388e",
+}
 TIER_VERSION = 3
 LLU_HEADERS = {
     "accept": "*/*",
     "accept-language": "en-GB,en;q=0.9,es;q=0.8,es-ES;q=0.7,en-US;q=0.6",
     "cache-control": "no-cache",
     "pragma": "no-cache",
-    "referer": "https://limitedlevelups.com/tier-list/MSH",
     "user-agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
@@ -102,10 +136,18 @@ class TierList(BaseModel):
             return None
 
     @classmethod
-    def from_limited_levelups_api(cls, url: str = TIER_URL_LLU_MSH):
+    def from_limited_levelups_api(cls, set_code: str):
         """Fetch a tier list from the Limited Level-Ups API."""
         try:
-            response = requests.get(url, headers=LLU_HEADERS, timeout=10)
+            set_code = set_code.upper()
+            tier_list_id = LLU_TIER_LIST_IDS.get(set_code)
+            if not tier_list_id:
+                raise ValueError(f"No Limited Level-Ups tier list configured for {set_code}")
+
+            url = f"{TIER_URL_LLU}{tier_list_id}"
+            headers = LLU_HEADERS.copy()
+            headers["referer"] = f"https://limitedlevelups.com/tier-list/{set_code}"
+            response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             data = response.json()
             meta = Meta(
@@ -161,13 +203,19 @@ class TierList(BaseModel):
             return False
 
     @classmethod
-    def update_limited_levelups_msh(cls):
-        """Update the local MSH tier file from the Limited Level-Ups API."""
-        tier_list = cls.from_limited_levelups_api()
+    def update_limited_levelups(cls, set_code: str, filename: str = ""):
+        """Update or create the local tier file for a set from the Limited Level-Ups API."""
+        tier_list = cls.from_limited_levelups_api(set_code)
         if tier_list is None:
             return False
 
-        file_path = os.path.join(TIER_FOLDER, TIER_FILE_LLU_MSH)
+        if filename:
+            file_path = os.path.join(TIER_FOLDER, filename)
+        else:
+            file_path = os.path.join(
+                TIER_FOLDER,
+                f"{TIER_FILE_PREFIX}_{tier_list.meta.set}_{int(datetime.now().timestamp())}.txt"
+            )
         return tier_list.to_file(file_path)
 
     @classmethod
@@ -325,7 +373,7 @@ class TierWindow(ScaledWindow):
             self._update_llu_button = Button(
                 self.window,
                 command=self.__update_limited_levelups_tier_list,
-                text="UPDATE MSH FROM LLU"
+                text="UPDATE FROM LLU"
             )
 
             # Add placeholder text to the entry fields
@@ -430,21 +478,43 @@ class TierWindow(ScaledWindow):
             self._download_button.config(state=tkinter.NORMAL)
             self.window.update()
 
+    def __get_selected_tier_row(self):
+        """Return the selected tier table row values, falling back to the focused row."""
+        selected = self.list_box.selection()
+        row_id = selected[0] if selected else self.list_box.focus()
+        if not row_id:
+            return None
+
+        row = self.list_box.item(row_id)
+        values = row.get("values", [])
+        return values if len(values) >= 4 else None
+
     def __update_limited_levelups_tier_list(self):
-        """Download the Limited Level-Ups MSH tier list and refresh the window."""
+        """Download the selected set's Limited Level-Ups tier list and refresh the window."""
         try:
-            self._status_text.set("Updating Limited Level-Ups Tier List")
+            selected_row = self.__get_selected_tier_row()
+            if not selected_row:
+                self._status_text.set("Select a tier list to update from LLU")
+                return
+
+            set_code, _, _, filename = selected_row[:4]
+            set_code = str(set_code).upper()
+            if set_code not in LLU_TIER_LIST_IDS:
+                self._status_text.set(f"No LLU tier list configured for {set_code}")
+                return
+
+            self._status_text.set(f"Updating {set_code} from Limited Level-Ups")
             self._download_button.config(state=tkinter.DISABLED)
             self._update_llu_button.config(state=tkinter.DISABLED)
             self.window.update()
 
-            if not TierList.update_limited_levelups_msh():
-                self._status_text.set("Failed to update Limited Level-Ups tier list")
+            if not TierList.update_limited_levelups(set_code, filename):
+                self._status_text.set(f"Failed to update {set_code} from LLU")
                 return
 
             self.__update_tier_table()
             self.update_callback()
-            self._status_text.set("Limited Level-Ups Tier List Updated")
+            self._status_text.set(f"{set_code} updated from Limited Level-Ups")
         except Exception as error:
             logger.error(f"Limited Level-Ups tier list update failed: {error}")
             self._status_text.set("Limited Level-Ups Tier List Update Failed")
