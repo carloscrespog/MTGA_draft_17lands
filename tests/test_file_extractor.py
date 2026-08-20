@@ -162,10 +162,17 @@ def test_retrieve_17lands_premium_data_sets_metadata(
     mock_seventeenlands_cls, file_extractor
 ):
     mock_sl_instance = mock_seventeenlands_cls.return_value
-    mock_sl_instance.download_premium_card_data.return_value = [
+    cards = [
         {"name": "Card One", constants.DATA_FIELD_17LANDS_NGP: 10},
         {"name": "Card Two", constants.DATA_FIELD_17LANDS_NGP: 15},
     ]
+
+    def populate_card_data(set_code, draft, user_group, card_data):
+        card_data["Card One"] = {}
+        card_data["Card Two"] = {}
+        return cards
+
+    mock_sl_instance.download_premium_card_data.side_effect = populate_card_data
 
     file_extractor.selected_sets = MagicMock()
     file_extractor.selected_sets.seventeenlands = ["MSH"]
@@ -182,3 +189,48 @@ def test_retrieve_17lands_premium_data_sets_metadata(
     assert file_extractor.combined_data["meta"]["time_period"] == "ALL_TIME"
     assert "game_count_note" in file_extractor.combined_data["meta"]
     assert file_extractor.combined_data["meta"]["game_count"] == 15
+
+
+@patch("src.file_extractor.Seventeenlands")
+def test_retrieve_17lands_premium_data_rejects_empty_response(
+    mock_seventeenlands_cls, file_extractor
+):
+    mock_seventeenlands_cls.return_value.download_premium_card_data.return_value = []
+    file_extractor.selected_sets = MagicMock()
+    file_extractor.selected_sets.seventeenlands = ["HOB"]
+
+    assert not file_extractor.retrieve_17lands_premium_data(["HOB"])
+
+
+@patch("src.file_extractor.time.sleep")
+@patch("src.file_extractor.Seventeenlands")
+def test_retrieve_17lands_data_rejects_empty_response(
+    mock_seventeenlands_cls, mock_sleep, file_extractor
+):
+    file_extractor.selected_sets = MagicMock()
+    file_extractor.selected_sets.seventeenlands = ["HOB"]
+
+    assert not file_extractor.retrieve_17lands_data(["HOB"], ["All Decks"])
+
+    mock_seventeenlands_cls.return_value.download_card_ratings.assert_called_once()
+
+
+@patch("src.file_extractor.check_file_integrity")
+@patch("src.file_extractor.os.remove")
+@patch("builtins.open", new_callable=mock_open)
+def test_export_card_data_removes_invalid_file_from_sets_folder(
+    mock_file, mock_remove, mock_check_file_integrity, file_extractor
+):
+    mock_check_file_integrity.return_value = (Result.ERROR_UNREADABLE_FILE, {})
+    file_extractor.selected_sets = MagicMock()
+    file_extractor.selected_sets.seventeenlands = ["HOB"]
+
+    assert file_extractor.export_card_data() == ""
+
+    expected_location = os.path.join(
+        constants.SETS_FOLDER, "HOB_PremierDraft_All_Data.json"
+    )
+    mock_file.assert_called_once_with(
+        expected_location, "w", encoding="utf-8", errors="replace"
+    )
+    mock_remove.assert_called_once_with(expected_location)

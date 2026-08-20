@@ -423,20 +423,17 @@ class FileExtractor(UIProgress):
             else:
                 paths = [os.path.join(
                     self.directory, constants.LOCAL_DOWNLOADS_DATA)]
-        logger.info("🔎 platform=%s", sys.platform)
-        logger.info("📁 self.directory=%r", self.directory)
-        logger.info("📁 LOCAL_DATA_FOLDER_PATH_LINUX=%r", getattr(constants, "LOCAL_DATA_FOLDER_PATH_LINUX", None))
-        logger.info("📦 LOCAL_DOWNLOADS_DATA=%r", getattr(constants, "LOCAL_DOWNLOADS_DATA", None))
-        logger.info("🏷️ LOCAL_DATA_FILE_PREFIX_DATABASE=%r", getattr(constants, "LOCAL_DATA_FILE_PREFIX_DATABASE", None))
-        logger.info("🧭 Computed search paths (%d):", len(paths))
+        logger.info("Platform: %s", sys.platform)
+        logger.info("Arena data directory: %r", self.directory)
+        logger.info("Computed Arena data search paths (%d):", len(paths))
         for p in paths:
             logger.info("   - %s (exists=%s)", p, os.path.exists(p))
             if os.path.exists(p):
                 try:
                     sample = sorted(os.listdir(p))[:50]
-                    logger.info("     📄 First files: %s", sample)
+                    logger.info("     First files: %s", sample)
                 except Exception as e:
-                    logger.error("     💥 listdir failed for %s: %s", p, e)
+                    logger.error("     Directory listing failed for %s: %s", p, e)
 
         arena_database_locations = search_local_files(
             paths, [constants.LOCAL_DATA_FILE_PREFIX_DATABASE])
@@ -773,7 +770,7 @@ class FileExtractor(UIProgress):
                     break
                 time.sleep(constants.CARD_RATINGS_INTER_DELAY_SECONDS)
 
-        return result
+        return result and bool(self.card_ratings)
 
     def retrieve_17lands_premium_data(self, sets):
         '''Use the 17Lands all-time card_data endpoint to download card ratings.'''
@@ -814,6 +811,7 @@ class FileExtractor(UIProgress):
                 break
             time.sleep(constants.CARD_RATINGS_INTER_DELAY_SECONDS)
 
+        result = result and bool(self.card_ratings)
         if result:
             self.combined_data["meta"]["source"] = "17Lands Premium"
             self.combined_data["meta"]["time_period"] = "ALL_TIME"
@@ -895,7 +893,7 @@ class FileExtractor(UIProgress):
             write_data = check_file_integrity(location)
 
             if write_data[0] != Result.VALID:
-                os.remove(output_file)
+                os.remove(location)
                 output_file = ""
 
         except Exception as error:
