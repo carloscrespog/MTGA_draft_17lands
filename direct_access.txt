@@ -1,1 +1,1 @@
-C:\Windows\System32\cmd.exe /c "cd /d C:\Users\carlo\Documents\MTGA_Draft_17Lands && call .venv\Scripts\activate.bat && python main.py"
+C:\Windows\System32\cmd.exe /c ""C:\Users\carlo\OneDrive\Documents\MTGA-Draft_github\MTGA_draft_17lands\Run_MTGA_Draft.bat""
