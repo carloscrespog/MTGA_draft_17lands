@@ -7,6 +7,7 @@ import datetime
 import itertools
 import re
 import sqlite3
+import tempfile
 from src import constants
 from src.logger import create_logger
 from src.utils import Result, check_file_integrity, clean_string
@@ -255,13 +256,50 @@ class FileExtractor(UIProgress):
         '''Sets the color ratings in a dataset'''
         self.combined_data["color_ratings"] = color_ratings
 
-    def download_card_data(self, database_size):
+    def download_local_card_data(self, database_size):
+        """Build a tier-list dataset from Arena cards without contacting 17Lands."""
+        temp_size = 0
+        self.card_ratings = {}
+        self.combined_data.pop("card_ratings", None)
+        try:
+            self._update_progress(5, True)
+            result, result_string, temp_size = self._retrieve_local_arena_data(
+                database_size
+            )
+            if not result:
+                return False, result_string, temp_size
+
+            if constants.SET_SELECTION_ALL in self.selected_sets.arena:
+                # Discovered expansions use ALL to support reprints. Without
+                # ratings, only exact local set codes define a safe card pool.
+                if not self._retrieve_stored_data(
+                    self.selected_sets.seventeenlands, exact_match=True
+                ):
+                    return (
+                        False,
+                        "No matching local Arena set was found.",
+                        temp_size,
+                    )
+
+            self.set_game_count(0)
+            self.set_color_ratings({})
+            self._initialize_17lands_data()
+            self._update_status("Building Local Data Set File")
+            self._assemble_set(False)
+            return True, "Arena cards ready for tier lists.", temp_size
+        except Exception as error:
+            logger.error(error)
+            return False, str(error), temp_size
+
+    def download_card_data(self, database_size, allow_local_only=True):
         '''Wrapper function for starting the set file download/creation process'''
         result = False
         result_string = ""
         temp_size = 0
         try:
-            result, result_string, temp_size = self._download_expansion(database_size)
+            result, result_string, temp_size = self._download_expansion(
+                database_size, allow_local_only=allow_local_only
+            )
 
         except Exception as error:
             logger.error(error)
@@ -285,13 +323,13 @@ class FileExtractor(UIProgress):
 
         return result, result_string, temp_size
 
-    def _download_expansion(self, database_size):
+    def _download_expansion(self, database_size, allow_local_only=True):
         ''' Function that performs the following steps:
             1. Build a card data file from local Arena files (stored as temp_card_data.json in the Temp folder)
                - The card sets contains the Arena IDs, card name, mana cost, colors, etc.
-            1A. Collect the card data from Scryfall if it's unavailable locally (fallback)
-            2. Collect the card_ratings data from scryfall
+            2. Collect the card ratings from 17Lands when available
             3. Build a set file by combining the card data and the card ratings
+               - New sets can use local cards alone for tier lists until ratings are available
         '''
         result = False
         result_string = ""
@@ -302,16 +340,41 @@ class FileExtractor(UIProgress):
                 result, result_string, temp_size = self._retrieve_local_arena_data(database_size)
                 if not result:
                     break
+                result_string = ""
+
+                matching_only = constants.SET_SELECTION_ALL in self.selected_sets.arena
 
                 self._update_progress(10, True)
                 self._update_status("Collecting 17Lands Data")
 
                 if not self.retrieve_17lands_data(self.selected_sets.seventeenlands, self.deck_colors):
-                    result = False
-                    result_string = "Couldn't Collect 17Lands Data"
-                    break
-
-                matching_only = True if constants.SET_SELECTION_ALL in self.selected_sets.arena else False
+                    # Failed partial downloads and updates of rated datasets
+                    # must remain failures.
+                    if self.card_ratings or not allow_local_only:
+                        result = False
+                        result_string = "Couldn't Collect 17Lands Data"
+                        break
+                    if matching_only:
+                        # Discovered sets use ALL so ratings can include reprints
+                        # and bonus sheets. Without ratings, use only exact local
+                        # set matches; cubes and other mixed pools cannot do this.
+                        if not self._retrieve_stored_data(
+                            self.selected_sets.seventeenlands, exact_match=True
+                        ):
+                            result = False
+                            result_string = (
+                                "17Lands statistics are unavailable and no matching "
+                                "local Arena set was found."
+                            )
+                            break
+                        matching_only = False
+                    self.set_game_count(0)
+                    self.set_color_ratings({})
+                    result_string = (
+                        "Download Complete - Arena cards saved for tier lists; "
+                        "17Lands statistics unavailable."
+                    )
+                    logger.info(result_string)
 
                 if not matching_only:
                     self._initialize_17lands_data()
@@ -323,6 +386,7 @@ class FileExtractor(UIProgress):
                 break
 
         except Exception as error:
+            result = False
             logger.error(error)
             result_string = error
 
@@ -341,6 +405,7 @@ class FileExtractor(UIProgress):
                 )
                 if not result:
                     break
+                result_string = ""
 
                 self._update_progress(10, True)
                 self._update_status("Collecting 17Lands Premium Data")
@@ -703,7 +768,7 @@ class FileExtractor(UIProgress):
 
         return result
 
-    def _retrieve_stored_data(self, set_list):
+    def _retrieve_stored_data(self, set_list, exact_match=False):
         '''Retrieves card data from the temp_card_data.json file stored in the Temp folder'''
         result = False
         self.card_dict = {}
@@ -712,7 +777,15 @@ class FileExtractor(UIProgress):
                 json_file = data.read()
                 json_data = json.loads(json_file)
 
-            if constants.SET_SELECTION_ALL in set_list:
+            if exact_match:
+                local_sets = {code.upper(): cards for code, cards in json_data.items()}
+                if not set_list or any(
+                    code.upper() not in local_sets for code in set_list
+                ):
+                    return False
+                for code in set_list:
+                    self.card_dict.update(local_sets[code.upper()].copy())
+            elif constants.SET_SELECTION_ALL in set_list:
                 for card_data in json_data.values():
                     self.card_dict.update(card_data.copy())
             else:
@@ -836,6 +909,8 @@ class FileExtractor(UIProgress):
         '''Use 17Lands endpoint to collect the data from the color_ratings page'''
         result = True
         game_count = 0
+        self.set_color_ratings({})
+        self.set_game_count(0)
         seventeenlands = Seventeenlands()
         try:
             self.combined_data["color_ratings"], game_count = seventeenlands.download_color_ratings(
@@ -849,7 +924,6 @@ class FileExtractor(UIProgress):
             self.set_game_count(game_count)
         except Exception as error:
             result = False
-            logger.error(url)
             logger.error(error)
         return result, game_count
 
@@ -881,23 +955,32 @@ class FileExtractor(UIProgress):
         return result
 
     def export_card_data(self):
-        '''Build the file for the set data'''
+        """Replace a dataset only after its complete replacement passes validation."""
+        temporary_location = None
         try:
             output_file = "_".join((clean_string(self.selected_sets.seventeenlands[0]), self.draft, self.user_group, constants.SET_FILE_SUFFIX))
             location = os.path.join(constants.SETS_FOLDER, output_file)
 
-            with open(location, 'w', encoding="utf-8", errors="replace") as file:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", errors="replace",
+                dir=constants.SETS_FOLDER, prefix=f".{output_file}.",
+                suffix=".tmp", delete=False,
+            ) as file:
+                temporary_location = file.name
                 json.dump(self.combined_data, file)
 
-            # Verify that the file was written
-            write_data = check_file_integrity(location)
+            if check_file_integrity(temporary_location)[0] != Result.VALID:
+                return ""
 
-            if write_data[0] != Result.VALID:
-                os.remove(location)
-                output_file = ""
-
+            os.replace(temporary_location, location)
+            temporary_location = None
+            return output_file
         except Exception as error:
             logger.error(error)
-            output_file = ""
-
-        return output_file
+            return ""
+        finally:
+            if temporary_location is not None:
+                try:
+                    os.remove(temporary_location)
+                except OSError as error:
+                    logger.error(error)

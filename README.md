@@ -159,7 +159,8 @@ Magic: The Gathering Arena draft tool that utilizes 17Lands data.
 - **Export Draft Data:** Export the full history of the current draft (every pack seen and pick made) to a CSV or JSON file by selecting `File->Export Draft Data`.
   - This is useful for analyzing your draft path, signals, and wheel percentages in external tools (Excel, Python, etc.).
   - The export includes card identity, 17Lands statistics, and a "Picked" flag.
-- **Download Set Data:** Open the Download Dataset window by selecting `Data->Download Dataset`. Enter the set information and click the ADD SET button to begin downloading the set data.
+- **Download Set Data:** Open the Download Dataset window by selecting `Data->Download Dataset`. Enter the set information and click the DOWNLOAD button to begin downloading the set data.
+  - The first normal download saves the set's local Arena cards before requesting 17Lands statistics, so tier lists remain usable if statistics are unavailable. Later downloads can add the statistics. This requires matching local Arena set data; cubes still need 17Lands to identify their card pool.
   - The download can take several minutes.
   - 17Lands will timeout the request if too many requests are made within a short period.
   - **Min Games:** You can adjust the minimum number of games required for color ratings (default: 5000). Lowering this is useful for low-population formats like Cube or Flashback drafts where data is scarce.

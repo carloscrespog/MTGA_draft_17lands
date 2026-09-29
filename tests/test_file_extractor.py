@@ -1,7 +1,9 @@
 import pytest
 import json
-import os
-from unittest.mock import patch, MagicMock, mock_open
+from types import SimpleNamespace
+from unittest.mock import patch, MagicMock
+from src.card_logic import CardResult
+from src.dataset import Dataset
 from src.file_extractor import (
     FileExtractor,
     decode_mana_cost,
@@ -10,6 +12,7 @@ from src.file_extractor import (
     check_date,
 )
 from src import constants
+from src.limited_sets import SetInfo
 from src.utils import Result, normalize_color_string
 from src.constants import (
     COLOR_WIN_RATE_GAME_COUNT_THRESHOLD_DEFAULT,
@@ -215,22 +218,290 @@ def test_retrieve_17lands_data_rejects_empty_response(
     mock_seventeenlands_cls.return_value.download_card_ratings.assert_called_once()
 
 
-@patch("src.file_extractor.check_file_integrity")
-@patch("src.file_extractor.os.remove")
-@patch("builtins.open", new_callable=mock_open)
-def test_export_card_data_removes_invalid_file_from_sets_folder(
-    mock_file, mock_remove, mock_check_file_integrity, file_extractor
+@pytest.fixture
+def local_set_extractor(file_extractor, tmp_path, monkeypatch):
+    """Load an Arena card cache while isolating installation discovery and HTTP."""
+    arena_cards = {
+        str(100000 + index): {
+            "name": f"New Card {index}",
+            "cmc": 2,
+            "mana_cost": "{1}{W}",
+            "colors": ["W"],
+            "types": ["Creature"],
+            "rarity": "common",
+            "image": [],
+        }
+        for index in range(100)
+    }
+    cache_path = tmp_path / "arena_cards.json"
+    cache_path.write_text(
+        json.dumps({"HOB": arena_cards, "OTHER": {"999": {"name": "Other Card"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(constants, "TEMP_CARD_DATA_FILE", str(cache_path))
+    monkeypatch.setattr(constants, "SETS_FOLDER", str(tmp_path))
+    monkeypatch.setattr("src.file_extractor.time.sleep", lambda _seconds: None)
+    file_extractor.select_sets(SetInfo(arena=["HOB"], seventeenlands=["HOB"]))
+    file_extractor.set_start_date("2023-01-01")
+    file_extractor.set_end_date("2023-01-31")
+    file_extractor.set_version(2)
+
+    def load_arena_cards(_database_size):
+        success = file_extractor._retrieve_stored_data(file_extractor.selected_sets.arena)
+        return success, "", 123
+
+    monkeypatch.setattr(file_extractor, "_retrieve_local_arena_data", load_arena_cards)
+    return file_extractor
+
+
+@pytest.mark.parametrize("request_fails", [False, True], ids=["empty", "unavailable"])
+@pytest.mark.parametrize(
+    "arena_codes, set_codes",
+    [
+        (["HOB"], ["HOB"]),
+        ([constants.SET_SELECTION_ALL], ["HOB"]),
+        ([constants.SET_SELECTION_ALL], ["hob"]),
+    ],
+    ids=["explicit_arena_set", "cached_all", "cached_all_lowercase"],
+)
+@patch("src.seventeenlands.requests.get")
+def test_download_without_17lands_saves_arena_cards_for_tier_lists(
+    mock_get, arena_codes, set_codes, request_fails, local_set_extractor, tmp_path
 ):
-    mock_check_file_integrity.return_value = (Result.ERROR_UNREADABLE_FILE, {})
-    file_extractor.selected_sets = MagicMock()
-    file_extractor.selected_sets.seventeenlands = ["HOB"]
-
-    assert file_extractor.export_card_data() == ""
-
-    expected_location = os.path.join(
-        constants.SETS_FOLDER, "HOB_PremierDraft_All_Data.json"
+    local_set_extractor.select_sets(
+        SetInfo(arena=arena_codes, seventeenlands=set_codes)
     )
-    mock_file.assert_called_once_with(
-        expected_location, "w", encoding="utf-8", errors="replace"
+    if request_fails:
+        mock_get.side_effect = RuntimeError("17Lands is unavailable")
+    else:
+        mock_get.return_value.json.return_value = []
+
+    # Color totals alone must not imply that this dataset has card statistics.
+    local_set_extractor.set_game_count(500)
+    local_set_extractor.set_color_ratings({"W": 55.0})
+
+    success, message, database_size = local_set_extractor.download_card_data(0)
+
+    assert success
+    assert message
+    assert database_size == 123
+    assert local_set_extractor.combined_data["meta"]["game_count"] == 0
+    filename = local_set_extractor.export_card_data()
+    assert filename
+
+    dataset = Dataset()
+    assert dataset.open_file(str(tmp_path / filename)) == Result.VALID
+    assert set(dataset.get_card_ratings()) == {
+        str(100000 + index) for index in range(100)
+    }
+    assert dataset.get_names_by_id([100000]) == ["New Card 0"]
+    assert dataset.get_ids_by_name(["New Card 0"]) == ["100000"]
+    assert dataset.get_color_ratings() == {}
+    card = dataset.get_data_by_id([100000])[0]
+    assert card["mana_cost"] == "{1}{W}"
+    assert card["colors"] == ["W"]
+    for color in DECK_COLORS:
+        assert card["deck_colors"][color]
+        assert all(value == 0.0 for value in card["deck_colors"][color].values())
+
+    tier = SimpleNamespace(
+        ratings={"New Card 0": SimpleNamespace(rating="A ", comment="")}
     )
-    mock_remove.assert_called_once_with(expected_location)
+    calculator = CardResult(None, {"TIER_TEST": tier}, MagicMock(), 1)
+    result = calculator.return_results([card], "All Decks", ["TIER_TEST"])
+    assert result[0]["results"] == ["A "]
+
+
+@pytest.mark.parametrize(
+    "arena_codes", [["HOB"], [constants.SET_SELECTION_ALL]],
+    ids=["explicit_arena_set", "cached_all"],
+)
+@patch("src.seventeenlands.requests.get")
+def test_download_with_17lands_merges_available_statistics(
+    mock_get, arena_codes, local_set_extractor
+):
+    local_set_extractor.selected_sets.arena = arena_codes
+    mock_get.return_value.json.return_value = [
+        {
+            "name": "New Card 0",
+            constants.DATA_FIELD_17LANDS_DICT[constants.DATA_FIELD_GIHWR]: 0.625,
+            constants.DATA_FIELD_17LANDS_IMAGE: "https://example.com/card.jpg",
+        },
+        {
+            "name": "Other Card",
+            constants.DATA_FIELD_17LANDS_DICT[constants.DATA_FIELD_GIHWR]: 0.55,
+        },
+    ]
+    local_set_extractor.set_game_count(500)
+    local_set_extractor.set_color_ratings({"W": 55.0})
+
+    success, _message, database_size = local_set_extractor.download_card_data(0)
+
+    assert success
+    assert database_size == 123
+    assert local_set_extractor.combined_data["meta"]["game_count"] == 500
+    assert local_set_extractor.combined_data["color_ratings"] == {"W": 55.0}
+    cards = local_set_extractor.combined_data["card_ratings"]
+    assert cards["100000"]["deck_colors"]["All Decks"]["gihwr"] == 62.5
+    assert cards["100000"]["image"] == ["https://example.com/card.jpg"]
+    if constants.SET_SELECTION_ALL in arena_codes:
+        # Ratings define the pool when available, including other print sets.
+        assert set(cards) == {"100000", "999"}
+        assert cards["999"]["deck_colors"]["All Decks"]["gihwr"] == pytest.approx(55.0)
+    else:
+        assert len(cards) == 100
+        assert cards["100001"]["deck_colors"]["All Decks"]["gihwr"] == 0.0
+
+
+@pytest.mark.parametrize("allow_local_only", [False, True], ids=["existing_stats", "cube"])
+@patch("src.seventeenlands.requests.get")
+def test_download_without_ratings_rejects_disallowed_fallback(
+    mock_get, allow_local_only, local_set_extractor
+):
+    mock_get.return_value.json.return_value = []
+    if allow_local_only:
+        local_set_extractor.select_sets(
+            SetInfo(
+                arena=[constants.SET_SELECTION_ALL],
+                seventeenlands=["Cube - Powered"],
+                set_code="CUBE",
+            )
+        )
+
+    success, message, _database_size = local_set_extractor.download_card_data(
+        0, allow_local_only=allow_local_only
+    )
+
+    assert not success
+    assert "17Lands" in message
+    assert not local_set_extractor.combined_data.get("card_ratings")
+
+
+@pytest.mark.parametrize(
+    "set_codes",
+    [["MISSING"], ["OB"], ["HOB", "MISSING"]],
+    ids=["missing_set", "substring_only", "one_of_multiple_sets_missing"],
+)
+@patch("src.seventeenlands.requests.get")
+def test_all_arena_fallback_requires_every_exact_set(
+    mock_get, set_codes, local_set_extractor
+):
+    mock_get.return_value.json.return_value = []
+    local_set_extractor.select_sets(
+        SetInfo(arena=[constants.SET_SELECTION_ALL], seventeenlands=set_codes)
+    )
+
+    success, message, _database_size = local_set_extractor.download_card_data(0)
+
+    assert not success
+    assert "17Lands" in message
+    assert not local_set_extractor.combined_data.get("card_ratings")
+
+
+@patch("src.seventeenlands.requests.get")
+def test_download_does_not_accept_partial_failed_statistics(mock_get, local_set_extractor):
+    response = MagicMock()
+    response.json.return_value = [
+        {
+            "name": "New Card 0",
+            constants.DATA_FIELD_17LANDS_DICT[constants.DATA_FIELD_GIHWR]: 0.625,
+        }
+    ]
+    mock_get.side_effect = [response] + [RuntimeError("Request failed")] * (
+        constants.CARD_RATINGS_ATTEMPT_MAX
+    )
+
+    success, message, _database_size = local_set_extractor.download_card_data(0)
+
+    assert not success
+    assert "17Lands" in message
+    assert not local_set_extractor.combined_data.get("card_ratings")
+
+
+@patch("src.seventeenlands.requests.get")
+def test_download_without_local_cards_still_fails(mock_get, local_set_extractor):
+    with patch.object(
+        local_set_extractor,
+        "_retrieve_local_arena_data",
+        return_value=(False, "Unable to access local Arena data", 0),
+    ):
+        success, message, database_size = local_set_extractor.download_card_data(0)
+
+    assert not success
+    assert "local Arena data" in message
+    assert database_size == 0
+    mock_get.assert_not_called()
+
+
+@patch("src.seventeenlands.requests.get", side_effect=RuntimeError("Request failed"))
+def test_color_ratings_failure_resets_optional_statistics(mock_get, local_set_extractor):
+    local_set_extractor.set_game_count(500)
+    local_set_extractor.set_color_ratings({"W": 55.0})
+
+    assert local_set_extractor.retrieve_17lands_color_ratings() == (False, 0)
+
+    assert local_set_extractor.combined_data["color_ratings"] == {}
+    assert local_set_extractor.combined_data["meta"]["game_count"] == 0
+
+
+@pytest.mark.parametrize("arena_codes", [["HOB"], [constants.SET_SELECTION_ALL]])
+@patch("src.seventeenlands.requests.get")
+def test_local_dataset_is_saved_without_network(mock_get, arena_codes, local_set_extractor, tmp_path):
+    local_set_extractor.selected_sets.arena = arena_codes
+    local_set_extractor.set_game_count(500)
+    local_set_extractor.set_color_ratings({"W": 55.0})
+    local_set_extractor.card_ratings = {"stale": {}}
+
+    success, message, size = local_set_extractor.download_local_card_data(0)
+    assert success, message
+    assert size == 123
+    filename = local_set_extractor.export_card_data()
+    assert filename
+    loaded = Dataset()
+    assert loaded.open_file(str(tmp_path / filename)) == Result.VALID
+    assert len(loaded.get_card_ratings()) == 100
+    assert loaded.get_names_by_id([100000]) == ["New Card 0"]
+    assert loaded.get_color_ratings() == {}
+    assert local_set_extractor.combined_data["meta"]["game_count"] == 0
+    assert loaded.get_data_by_id([100000])[0]["deck_colors"]["All Decks"]["gihwr"] == 0.0
+    mock_get.assert_not_called()
+
+
+@patch("src.seventeenlands.requests.get")
+def test_local_dataset_rejects_unknown_card_pool(mock_get, local_set_extractor):
+    local_set_extractor.select_sets(SetInfo(arena=[constants.SET_SELECTION_ALL], seventeenlands=["Cube"]))
+    success, _, _ = local_set_extractor.download_local_card_data(0)
+    assert not success
+    assert not local_set_extractor.combined_data.get("card_ratings")
+    mock_get.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["invalid", "write", "replace"])
+def test_failed_export_preserves_saved_cards(local_set_extractor, tmp_path, failure):
+    success, _, _ = local_set_extractor.download_local_card_data(0)
+    assert success
+    filename = local_set_extractor.export_card_data()
+    saved_path = tmp_path / filename
+    original = saved_path.read_bytes()
+    before = set(tmp_path.iterdir())
+    if failure == "invalid":
+        local_set_extractor.combined_data["card_ratings"] = {}
+        assert local_set_extractor.export_card_data() == ""
+    elif failure == "write":
+        with patch("src.file_extractor.json.dump", side_effect=OSError("Disk full")):
+            assert local_set_extractor.export_card_data() == ""
+    else:
+        with patch("src.file_extractor.os.replace", side_effect=PermissionError("Locked file")):
+            assert local_set_extractor.export_card_data() == ""
+    assert saved_path.read_bytes() == original
+    assert set(tmp_path.iterdir()) == before
+    loaded = Dataset()
+    assert loaded.open_file(str(saved_path)) == Result.VALID
+    assert loaded.get_names_by_id([100000]) == ["New Card 0"]
+
+
+def test_invalid_initial_export_leaves_no_dataset(local_set_extractor, tmp_path):
+    before = set(tmp_path.iterdir())
+    local_set_extractor.combined_data["card_ratings"] = {}
+    assert local_set_extractor.export_card_data() == ""
+    assert set(tmp_path.iterdir()) == before

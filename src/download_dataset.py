@@ -5,7 +5,7 @@ from tkinter.ttk import Label, Button, OptionMenu, Progressbar, Separator
 from datetime import date, datetime, UTC
 from src.scaled_window import ScaledWindow, identify_safe_coordinates
 from src.logger import create_logger
-from src.utils import retrieve_local_set_list, clean_string
+from src.utils import retrieve_local_set_list, clean_string, check_file_integrity, Result
 from src.file_extractor import FileExtractor
 from src.configuration import write_configuration
 from src.constants import (
@@ -418,6 +418,7 @@ class DownloadDatasetWindow(ScaledWindow):
         )
 
         current_time = datetime.now().timestamp()
+        local_dataset_name = ""
 
         try:
             if download_args.enable_rate_limit:
@@ -432,6 +433,35 @@ class DownloadDatasetWindow(ScaledWindow):
             file_list, error_list = retrieve_local_set_list(set_codes)
             for error_string in error_list:
                 logger.error(error_string)
+
+            if not download_args.premium_download:
+                set_code = clean_string(
+                    download_args.sets[download_args.draft_set.get()].seventeenlands[0]
+                )
+                matching_files = [
+                    file for file in file_list
+                    if file[0] == set_code
+                    and file[1] == download_args.draft.get()
+                    and file[2] == download_args.user_group.get()
+                ]
+                has_existing_statistics = any(
+                    file[5] > 0 or self._has_card_statistics(file[6])
+                    for file in matching_files
+                )
+                if not matching_files:
+                    download_args.status.set("Saving Arena Cards")
+                    self.window.update()
+                    local_success, _, local_size = extractor.download_local_card_data(
+                        self.configuration.card_data.database_size
+                    )
+                    if local_success:
+                        local_dataset_name = extractor.export_card_data()
+                        if not local_dataset_name:
+                            self._handle_failure(download_args, "File Write Failure")
+                            return
+                        self._register_dataset(download_args, local_dataset_name, local_size)
+                        download_args.status.set("Arena cards saved; checking 17Lands statistics")
+                        self.window.update()
 
             if download_args.premium_download:
                 extractor.set_color_ratings({})
@@ -450,7 +480,7 @@ class DownloadDatasetWindow(ScaledWindow):
                     extractor.set_color_ratings(download_args.color_ratings)
                     download_success = True
 
-                if not self._handle_game_count_and_notify(
+                if not local_dataset_name and not self._handle_game_count_and_notify(
                     download_success, game_count, file_list, download_args
                 ):
                     self._set_download_buttons_state(download_args, "normal")
@@ -465,31 +495,37 @@ class DownloadDatasetWindow(ScaledWindow):
                 )
             else:
                 download_success, result_string, temp_size = extractor.download_card_data(
-                    self.configuration.card_data.database_size
+                    self.configuration.card_data.database_size,
+                    allow_local_only=not has_existing_statistics,
                 )
             if not download_success:
-                self._handle_failure(download_args, result_string)
+                self._handle_failure(download_args, result_string, local_dataset_name)
                 return
 
             dataset_name = extractor.export_card_data()
             if not dataset_name:
-                self._handle_failure(download_args, "File Write Failure")
+                self._handle_failure(download_args, "File Write Failure", local_dataset_name)
                 return
 
-            download_args.progress["value"] = 100
-            self.window.update()
-            download_args.status.set("Updating Set List")
-            self.__update_set_table(download_args.list_box, download_args.sets)
-            self.update_event_files_callback()
-            download_args.status.set("Download Complete")
-            self._set_download_buttons_state(download_args, "normal")
-            self.configuration.card_data.database_size = temp_size
-            self.configuration.card_data.latest_dataset = dataset_name
-            write_configuration(self.configuration)
-            self.window.update()
+            self._register_dataset(download_args, dataset_name, temp_size)
+            self._finish_download(download_args, result_string or "Download Complete")
 
         except Exception as error:
-            self._handle_failure(download_args, error)
+            self._handle_failure(download_args, error, local_dataset_name)
+
+    def _register_dataset(self, args, dataset_name, database_size):
+        self.configuration.card_data.database_size = database_size
+        self.configuration.card_data.latest_dataset = dataset_name
+        write_configuration(self.configuration)
+        self.__update_set_table(args.list_box, args.sets)
+        if self.update_event_files_callback:
+            self.update_event_files_callback()
+
+    def _finish_download(self, args, message):
+        args.progress["value"] = 100
+        args.status.set(message)
+        self._set_download_buttons_state(args, "normal")
+        self.window.update()
 
     def _rate_limit_check(self, current_time, args):
         time_difference = current_time - self.configuration.card_data.last_check
@@ -567,7 +603,26 @@ class DownloadDatasetWindow(ScaledWindow):
                         return False
         return True
 
-    def _handle_failure(self, args, result_string):
+    @staticmethod
+    def _has_card_statistics(file_location):
+        # Color totals may be unavailable even when card statistics were saved.
+        result, dataset = check_file_integrity(file_location)
+        if result != Result.VALID:
+            return False
+        return any(
+            any(statistics.values())
+            for card in dataset["card_ratings"].values()
+            for statistics in card.get("deck_colors", {}).values()
+        )
+
+    def _handle_failure(self, args, result_string, saved_dataset=""):
+        if saved_dataset:
+            logger.warning("Arena cards saved in %s; statistics update failed: %s", saved_dataset, result_string)
+            self._finish_download(
+                args,
+                "Arena cards saved for tier lists; 17Lands statistics could not be added.",
+            )
+            return
         args.status.set("Download Failed")
         self.window.update()
         self._set_download_buttons_state(args, "normal")
