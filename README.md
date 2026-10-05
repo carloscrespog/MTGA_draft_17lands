@@ -326,6 +326,8 @@ MTGA_Draft_17Lands now features integrated support for downloading and using 17L
 - Enter the 17Lands tier list URL and a label for the tier list.
 - The tier list will be saved to the `Tier` folder.
 
+To refresh a set from Limited Level-Ups, select a row in this window and click **UPDATE FROM LLU**. The tool discovers the current lists from the set's LLU page and downloads every available list, including separate authors such as Alex and Marc for OTJ. Existing sources are updated in place; additional lists appear as separate choices. If the selected row is not already one of those sources, it is reused for the first missing LLU list.
+
 1. **Use Tier Lists in Drafts**
 
 - Make sure you have downloaded the dataset for the event from `Data > Download Dataset`. The dataset is required to identify cards in the Arena log, even if it doesn't contain card data.

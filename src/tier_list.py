@@ -2,6 +2,7 @@ import tkinter
 import requests
 import os
 import json
+import tempfile
 from datetime import datetime
 from tkinter.ttk import Label, Button
 from pydantic import BaseModel
@@ -9,59 +10,15 @@ from typing import Dict, Optional
 from src.scaled_window import ScaledWindow, identify_safe_coordinates
 from src.logger import create_logger
 from src.constants import GRADE_ORDER_DICT, LETTER_GRADE_NA
+from src.limited_levelups import (
+    TIER_URL_LLU, discover_tier_list_ids, llu_headers, normalize_set_code,
+)
 
 # Constants for tier list storage and API
 TIER_FOLDER = os.path.join(os.getcwd(), "Tier")
 TIER_FILE_PREFIX = "Tier"
 TIER_URL_17LANDS = "https://www.17lands.com/tier_list/"
-TIER_URL_LLU = "https://limitedlevelups.com/api/tier-list/"
-LLU_TIER_LIST_IDS = {
-    "HOB": "528d1c45d1f04b59abac2a897a8928c8",
-    "MSH": "1c86af8656f7432c83d9f9bb9c92f9df",
-    "SOS": "e195401b1eaa48e3b5d6670e0ae338e9",
-    "TMT": "fd5499ae88854ca0ac1bc2ad95ade9b2",
-    "ECL": "1745e64176864bb2bec132cbd601b604",
-    "TLA": "efdfa8408fb448be846ac06f9d9192ff",
-    "SPM": "4f9e6dc9c48c4052805dcfa65568c964",
-    "EOE": "4f34ccc070464c6c90f85c78972ee6ac",
-    "FIN": "90be207ac0e34b8ea20ae396c434cbae",
-    "TDM": "dd9c5b6db6b94ce0bbf3fd285625ceb9",
-    "DFT": "b0f9dbffd24843d5b8b693f30bc8b1e9",
-    "FDN": "597d29e75d704ecf9877fc0e4b2c4116",
-    "DSK": "edec3f514f264753bf4a46a8a2fc7d82",
-    "BLB": "6057e51272c94a7cb304bd511b7c3bcf",
-    "MH3": "1775dc0b2fed451cbc5ad4441e2ab9c3",
-    "WOE": "87b40a05e0974eafa368be44e1d3e0c4",
-    "MOM": "a7daeb6a90b246e895c8634e34734090",
-    "VOW": "ac2ca9722737412ba0c4c4c4b2e28598",
-    "STX": "a2753035da8646038f55b7321de1dfc9",
-    "PIO": "22b77386e0354d84827e732c226ebc91",
-    "MKM": "a5c17edddaea4680a28126dae2a5178f",
-    "LCI": "b8dad7059ff24da28da636a1c50da7e8",
-    "LTR": "aa685e825b12489a83f081dec8dc308d",
-    "ONE": "959517c42af04b909ddb6456904b7001",
-    "BRO": "b8d4ba9d1bad49828bfa6371f6b4f09b",
-    "DMU": "e12ee0b1fadc4ab7b8de4c3730878a90",
-    "HBG": "d24c2d28b6aa4146912b2ca92c503fe1",
-    "SNC": "8513f3fa48f140c0a4792862f530dea9",
-    "NEO": "0b2b04f23e104ddba3501cd009385d60",
-    "MID": "ef928c7c17bb4f57b09a75be5daf7df9",
-    "AFR": "1d901171375f4cff9834c751667c4254",
-    "IKO": "db593297907e41af93eedd994e26da28",
-    "ELD": "30588ade239246d0ab12393d00dc801a",
-    "KTK": "a6346d2850ef45918508db61d057388e",
-}
 TIER_VERSION = 3
-LLU_HEADERS = {
-    "accept": "*/*",
-    "accept-language": "en-GB,en;q=0.9,es;q=0.8,es-ES;q=0.7,en-US;q=0.6",
-    "cache-control": "no-cache",
-    "pragma": "no-cache",
-    "user-agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
-    ),
-}
 
 logger = create_logger()
 
@@ -137,42 +94,55 @@ class TierList(BaseModel):
 
     @classmethod
     def from_limited_levelups_api(cls, set_code: str):
-        """Fetch a tier list from the Limited Level-Ups API."""
-        try:
-            set_code = set_code.upper()
-            tier_list_id = LLU_TIER_LIST_IDS.get(set_code)
-            if not tier_list_id:
-                raise ValueError(f"No Limited Level-Ups tier list configured for {set_code}")
+        """Fetch the primary LLU list, retaining the single-list API."""
+        tier_lists = cls.from_limited_levelups_apis(set_code)
+        return tier_lists[0] if tier_lists else None
 
-            url = f"{TIER_URL_LLU}{tier_list_id}"
-            headers = LLU_HEADERS.copy()
-            headers["referer"] = f"https://limitedlevelups.com/tier-list/{set_code}"
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            meta = Meta(
-                collection_date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                label=data.get("name", ""),
-                set=data.get("expansion", ""),
-                version=TIER_VERSION,
-                url=url
-            )
-            ratings = {}
-            for card in data.get("ratings", []):
-                name = card.get("name", "")
-                if not name:
-                    continue
-                tier = card.get("tier", "").ljust(2)
-                if tier not in GRADE_ORDER_DICT:
-                    tier = LETTER_GRADE_NA
-                ratings[name] = Rating(
-                    rating=tier,
-                    comment=card.get("comment", "")
+    @classmethod
+    def from_limited_levelups_apis(cls, set_code: str):
+        """Discover and fetch every published LLU list for a set before saving any."""
+        try:
+            set_code = normalize_set_code(set_code)
+            tier_list_ids = discover_tier_list_ids(set_code)
+            headers = llu_headers(set_code)
+            tier_lists = []
+            for tier_list_id in tier_list_ids:
+                url = f"{TIER_URL_LLU}{tier_list_id}"
+                response = requests.get(url, headers=headers, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                if not isinstance(data, dict) or data.get("expansion") != set_code:
+                    raise ValueError(f"LLU returned a tier list for the wrong set ({set_code} expected)")
+                if not isinstance(data.get("ratings"), list):
+                    raise ValueError(f"LLU returned invalid ratings for {set_code}")
+                meta = Meta(
+                    collection_date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    label=data.get("name") or f"LLU {set_code}",
+                    set=set_code,
+                    version=TIER_VERSION,
+                    url=url
                 )
-            return cls(meta=meta, ratings=ratings)
-        except (requests.RequestException, ValueError, KeyError, TypeError) as e:
-            logger.error(f"Failed to fetch tier list from Limited Level-Ups API: {e}")
-            return None
+                ratings = {}
+                for card in data["ratings"]:
+                    if not isinstance(card, dict):
+                        raise ValueError(f"LLU returned an invalid card for {set_code}")
+                    name = card.get("name")
+                    if not name:
+                        continue
+                    if not isinstance(name, str):
+                        raise ValueError(f"LLU returned an invalid card name for {set_code}")
+                    tier = card.get("tier") or ""
+                    tier = tier.ljust(2) if isinstance(tier, str) else LETTER_GRADE_NA
+                    if tier not in GRADE_ORDER_DICT:
+                        tier = LETTER_GRADE_NA
+                    ratings[name] = Rating(rating=tier, comment=card.get("comment", ""))
+                if not ratings:
+                    raise ValueError(f"LLU returned no card ratings for {set_code}")
+                tier_lists.append(cls(meta=meta, ratings=ratings))
+            return tier_lists
+        except (requests.RequestException, ValueError, KeyError, TypeError) as error:
+            logger.error(f"Failed to fetch tier lists from Limited Level-Ups: {error}")
+            return []
 
     @classmethod
     def from_file(cls, file_path: str):
@@ -204,19 +174,58 @@ class TierList(BaseModel):
 
     @classmethod
     def update_limited_levelups(cls, set_code: str, filename: str = ""):
-        """Update or create the local tier file for a set from the Limited Level-Ups API."""
-        tier_list = cls.from_limited_levelups_api(set_code)
-        if tier_list is None:
+        """Refresh all LLU lists, reusing local files by source ID on repeat updates."""
+        tier_lists = cls.from_limited_levelups_apis(set_code)
+        if not tier_lists:
             return False
 
+        set_code = tier_lists[0].meta.set
+        existing_files = {}
+        selected_id = None
+        for _, _, _, local_filename in cls.retrieve_files(set_code):
+            local_tier = cls.from_file(os.path.join(TIER_FOLDER, local_filename))
+            if local_tier and local_tier.meta.url.startswith((TIER_URL_LLU, TIER_URL_17LANDS)):
+                source_id = local_tier.meta.url.rstrip("/").rsplit("/", 1)[-1]
+                existing_files.setdefault(source_id, local_filename)
+                if local_filename == filename:
+                    selected_id = source_id
+                    existing_files[source_id] = filename
+
+        ids = [tier.meta.url.rsplit("/", 1)[-1] for tier in tier_lists]
+        targets = {
+            source_id: existing_files.get(source_id, f"{TIER_FILE_PREFIX}_{set_code}_{source_id}.txt")
+            for source_id in ids
+        }
         if filename:
-            file_path = os.path.join(TIER_FOLDER, filename)
-        else:
-            file_path = os.path.join(
-                TIER_FOLDER,
-                f"{TIER_FILE_PREFIX}_{tier_list.meta.set}_{int(datetime.now().timestamp())}.txt"
-            )
-        return tier_list.to_file(file_path)
+            if selected_id in targets:
+                targets[selected_id] = filename
+            else:
+                # A manually downloaded row becomes the first missing LLU source.
+                # If all sources already exist, refresh those without making a duplicate.
+                missing_id = next((source_id for source_id in ids if source_id not in existing_files), None)
+                if missing_id:
+                    targets[missing_id] = filename
+
+        staged_files = []
+        try:
+            # Stage complete files first so network/serialization failures cannot
+            # truncate an existing tier list. Replace each destination atomically.
+            for tier_list, source_id in zip(tier_lists, ids):
+                with tempfile.NamedTemporaryFile(dir=TIER_FOLDER, prefix=".llu-", delete=False) as temp:
+                    temp_path = temp.name
+                staged_files.append((temp_path, os.path.join(TIER_FOLDER, targets[source_id])))
+                if not tier_list.to_file(temp_path):
+                    return False
+            for temp_path, file_path in staged_files:
+                os.replace(temp_path, file_path)
+            return True
+        except OSError as error:
+            logger.error(f"Failed to save Limited Level-Ups tier lists: {error}")
+            return False
+        finally:
+            for temp_path, _ in staged_files:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
     @classmethod
     def retrieve_files(cls, code: str = ""):
@@ -498,10 +507,7 @@ class TierWindow(ScaledWindow):
                 return
 
             set_code, _, _, filename = selected_row[:4]
-            set_code = str(set_code).upper()
-            if set_code not in LLU_TIER_LIST_IDS:
-                self._status_text.set(f"No LLU tier list configured for {set_code}")
-                return
+            set_code = normalize_set_code(str(set_code))
 
             self._status_text.set(f"Updating {set_code} from Limited Level-Ups")
             self._download_button.config(state=tkinter.DISABLED)
@@ -509,12 +515,12 @@ class TierWindow(ScaledWindow):
             self.window.update()
 
             if not TierList.update_limited_levelups(set_code, filename):
-                self._status_text.set(f"Failed to update {set_code} from LLU")
+                self._status_text.set(f"Failed to update {set_code} from LLU; see the log for details")
                 return
 
             self.__update_tier_table()
             self.update_callback()
-            self._status_text.set(f"{set_code} updated from Limited Level-Ups")
+            self._status_text.set(f"{set_code} tier lists updated from Limited Level-Ups")
         except Exception as error:
             logger.error(f"Limited Level-Ups tier list update failed: {error}")
             self._status_text.set("Limited Level-Ups Tier List Update Failed")
