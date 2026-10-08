@@ -500,6 +500,7 @@ class Overlay(ScaledWindow):
         self.column_6_options = None
         self.column_7_options = None
         self.taken_table = None
+        self.taken_data_source_options = None
         self.compare_table = None
         self.compare_list = None
         self.suggester_table = None
@@ -1550,22 +1551,22 @@ class Overlay(ScaledWindow):
             logger.error(error)
 
     def __update_data_source_options(self, new_list):
-        """Update the option menu that lists the available data sets for the current draft set (i.e., QuickDraft, PremierDraft, TradDraft, etc.)"""
+        """Update both windows' menus of available data sets for the current draft."""
         self.__control_trace(False)
         try:
             if new_list:
                 self.data_source_selection.set(next(iter(self.data_sources)))
-                menu = self.data_source_options["menu"]
-                menu.delete(0, "end")
-
-                self.data_source_list = []
-
-                for key in self.data_sources:
-                    menu.add_command(
-                        label=key,
-                        command=lambda value=key: self.data_source_selection.set(value),
-                    )
-                    self.data_source_list.append(key)
+                self.data_source_list = list(self.data_sources)
+                for options in (self.data_source_options, self.taken_data_source_options):
+                    if options is None:
+                        continue
+                    menu = options["menu"]
+                    menu.delete(0, "end")
+                    for key in self.data_source_list:
+                        menu.add_command(
+                            label=key,
+                            command=lambda value=key: self.data_source_selection.set(value),
+                        )
 
             elif self.data_source_selection.get() not in self.data_sources:
                 self.data_source_selection.set(next(iter(self.data_sources)))
@@ -2478,6 +2479,7 @@ class Overlay(ScaledWindow):
     def __close_taken_cards_window(self, popup):
         """Clear taken card table data when the Taken Cards window is closed"""
         self.taken_table = None
+        self.taken_data_source_options = None
 
         popup.destroy()
 
@@ -2499,8 +2501,31 @@ class Overlay(ScaledWindow):
         )
         self.__control_trace(False)
         try:
-            tkinter.Grid.rowconfigure(popup, 4, weight=1)
+            tkinter.Grid.rowconfigure(popup, 5, weight=1)
             tkinter.Grid.columnconfigure(popup, 6, weight=1)
+
+            data_source_frame = tkinter.Frame(
+                popup, highlightbackground="white", highlightthickness=2
+            )
+            data_source_label = Label(
+                data_source_frame,
+                text="Data Source:",
+                style="MainSectionsBold.TLabel",
+                anchor="w",
+            )
+            self.taken_data_source_options = OptionMenu(
+                data_source_frame,
+                self.data_source_selection,
+                self.data_source_selection.get(),
+                *self.data_source_list,
+                style="All.TMenubutton",
+            )
+            menu = self.root.nametowidget(self.taken_data_source_options["menu"])
+            menu.config(font=self.fonts_dict["All.TMenubutton"])
+            data_source_label.pack(side=tkinter.LEFT)
+            self.taken_data_source_options.pack(
+                side=tkinter.LEFT, expand=True, fill="both"
+            )
 
             taken_cards = self.draft.retrieve_taken_cards()
             copy_button = Button(
@@ -2672,13 +2697,14 @@ class Overlay(ScaledWindow):
                 offvalue=0,
             )
 
-            option_frame.grid(row=0, column=0, columnspan=7, sticky="nsew")
+            data_source_frame.grid(row=0, column=0, columnspan=7, sticky="nsew")
+            option_frame.grid(row=1, column=0, columnspan=7, sticky="nsew")
             type_checkbox_frame.grid(
-                row=1, column=0, columnspan=7, sticky="nsew", pady=5
+                row=2, column=0, columnspan=7, sticky="nsew", pady=5
             )
-            checkbox_frame.grid(row=2, column=0, columnspan=7, sticky="nsew")
-            copy_button.grid(row=3, column=0, columnspan=7, sticky="nsew")
-            taken_table_frame.grid(row=4, column=0, columnspan=7, sticky="nsew")
+            checkbox_frame.grid(row=3, column=0, columnspan=7, sticky="nsew")
+            copy_button.grid(row=4, column=0, columnspan=7, sticky="nsew")
+            taken_table_frame.grid(row=5, column=0, columnspan=7, sticky="nsew")
 
             self.taken_table.pack(side=tkinter.LEFT, expand=True, fill="both")
 
