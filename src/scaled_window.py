@@ -85,6 +85,11 @@ class ScaledWindow:
                 list_box.bind(
                     '<Button-1>', lambda event: self._disable_resizing(event, table=list_box))
             self.table_info[table_label] = TableInfo()
+            if "Column2" in header_labels:
+                self.table_info[table_label].column = "Column2"
+                self.table_info[table_label].reverse = True
+                list_box.heading("Column2", command=lambda: self._sort_table_column(
+                    table_label, list_box, "Column2", False))
         except Exception as error:
             logger.error(error)
         return list_box

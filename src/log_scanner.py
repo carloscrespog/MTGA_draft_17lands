@@ -272,8 +272,16 @@ class ArenaScanner:
             if event.type in constants.LIMITED_TYPES_DICT and all(
                 x in event_name for x in event.keywords
             ):
-                event_type = event.type
-                event_label = event.label[:12]
+                # Qualifiers can contain draft rounds as well as sealed rounds.
+                # Preserve the configured set even when the event name omits it.
+                qualifier_draft = "Qualifier" in event_name and any(
+                    "draft" in section.lower() for section in event_name.split("_")
+                )
+                event_type = (
+                    constants.LIMITED_TYPE_STRING_DRAFT_PREMIER
+                    if qualifier_draft else event.type
+                )
+                event_label = "QualDraft" if qualifier_draft else event.label[:12]
                 event_set = [event.set_code]
                 number_of_players = (
                     4

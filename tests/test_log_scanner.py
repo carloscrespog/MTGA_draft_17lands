@@ -1913,3 +1913,21 @@ def test_draft_history_recording(function_scanner):
     # 4. Verify Clear Draft resets history
     function_scanner.clear_draft(True)
     assert len(function_scanner.retrieve_draft_history()) == 0
+
+
+@pytest.mark.parametrize("round_name, expected_type, expected_label", [
+    ("Draft1", "PremierDraft", "QualDraft"),
+    ("Draft2", "PremierDraft", "QualDraft"),
+    ("Sealed", "Sealed", "QualSealed"),
+])
+def test_qualifier_round_format(round_name, expected_type, expected_label):
+    scanner = ArenaScanner(TEST_LOG_FILE_LOCATION, TEST_SETS)
+    matched, event_type, label, sets, players = (
+        scanner._ArenaScanner__check_special_event(
+            f"ArenaLimitedQualifier_{round_name}_20261016"
+        )
+    )
+    assert matched
+    assert (event_type, label, sets, players) == (
+        expected_type, expected_label, ["MKM"], 8
+    )

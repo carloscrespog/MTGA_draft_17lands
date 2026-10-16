@@ -1715,16 +1715,13 @@ class Overlay(ScaledWindow):
 
     def __update_event_column_defaults(self):
         """Select event-specific column defaults after column options are refreshed."""
-        event_set, event_type = self.draft.retrieve_current_limited_event()
-        if (
-            event_set != "MSH"
-            or event_type != constants.LIMITED_TYPE_STRING_DRAFT_PREMIER
-        ):
+        event_set, _ = self.draft.retrieve_current_limited_event()
+        if not event_set:
             return
 
         for option, value in self.main_options_dict.items():
             tier_list = self.tier_data.get(value)
-            if tier_list and tier_list.meta.set == "MSH":
+            if tier_list and tier_list.meta.set == event_set:
                 self.column_6_selection.set(option)
                 if self.configuration.settings.column_6 != value:
                     self.configuration.settings.column_6 = value
