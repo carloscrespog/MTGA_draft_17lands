@@ -905,7 +905,7 @@ class FileExtractor(UIProgress):
             elif not matching_only:
                 self.combined_data["card_ratings"][card] = card_data
                 
-    def retrieve_17lands_color_ratings(self):
+    def retrieve_17lands_color_ratings(self, all_time=False):
         '''Use 17Lands endpoint to collect the data from the color_ratings page'''
         result = True
         game_count = 0
@@ -919,7 +919,8 @@ class FileExtractor(UIProgress):
                 self.start_date, 
                 self.end_date, 
                 self.user_group,
-                threshold=self.threshold
+                threshold=self.threshold,
+                **({"all_time": True} if all_time else {}),
             )
             self.set_game_count(game_count)
         except Exception as error:

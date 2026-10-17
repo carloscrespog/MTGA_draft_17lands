@@ -3,8 +3,17 @@ from src.card_logic import get_card_colors
 
 
 class SignalCalculator:
-    def __init__(self, set_metrics):
+    def __init__(self, set_metrics, color_ratings=None):
         self.metrics = set_metrics
+        from math import isfinite
+
+        self.pair_baselines = {}
+        for pair, rate in (color_ratings or {}).items():
+            if (isinstance(pair, str) and len(pair) == 2
+                    and set(pair) <= set("WUBRG") and len(set(pair)) == 2
+                    and isinstance(rate, (int, float)) and isfinite(rate)
+                    and 0 < rate <= 100):
+                self.pair_baselines[frozenset(pair)] = rate
         # Get the global average win rate for "All Decks" to use as a baseline
         self.baseline_wr, _ = self.metrics.get_metrics(
             constants.FILTER_OPTION_ALL_DECKS, constants.DATA_FIELD_GIHWR
@@ -67,3 +76,46 @@ class SignalCalculator:
                 continue
 
         return color_signals
+
+
+    PAIRS = ("WU", "UB", "BR", "RG", "WG", "WB", "UR", "BG", "WR", "UG")
+
+    def calculate_pack_pair_signals(self, pack_cards, current_pick, card_stats=None):
+        """Sum positive lateness * pair quality, in percentage-point units.
+
+        Each pair uses its deck win rate as baseline, falling back to the set mean.
+        LLU rates are fractions; dataset rates and the baseline are percentages.
+        Missing LLU values fall back to the corresponding 17Lands pair bucket.
+        Pair performance includes cards splashed into that pair, like the source data.
+        """
+        from math import isfinite
+
+        scores = dict.fromkeys(self.PAIRS, 0.0)
+        card_stats = card_stats or {}
+        for card in pack_cards:
+            stats = card_stats.get(card.get(constants.DATA_FIELD_NAME), {})
+            buckets = card.get(constants.DATA_FIELD_DECK_COLORS, {})
+            ata = stats.get("ata")
+            if ata is None:
+                ata = buckets.get(constants.FILTER_OPTION_ALL_DECKS, {}).get(
+                    constants.DATA_FIELD_ATA, 0.0
+                )
+            if not isinstance(ata, (int, float)) or not isfinite(ata) or ata <= 0:
+                continue
+            lateness = current_pick - ata
+            if lateness <= 0:
+                continue
+            for pair in self.PAIRS:
+                rate = stats.get("pairs", {}).get(pair, {}).get("gihWr")
+                if rate is not None:
+                    rate = rate * 100 if isinstance(rate, (int, float)) else None
+                else:
+                    bucket = next((value for key, value in buckets.items()
+                                   if len(key) == 2 and set(key) == set(pair)), {})
+                    rate = bucket.get(constants.DATA_FIELD_GIHWR)
+                if not isinstance(rate, (int, float)) or not isfinite(rate):
+                    continue
+                baseline = self.pair_baselines.get(frozenset(pair), self.baseline_wr)
+                if baseline < rate <= 100:
+                    scores[pair] += lateness * (rate - baseline)
+        return scores

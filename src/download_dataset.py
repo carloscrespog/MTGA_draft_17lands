@@ -464,9 +464,11 @@ class DownloadDatasetWindow(ScaledWindow):
                         self.window.update()
 
             if download_args.premium_download:
-                extractor.set_color_ratings({})
-                download_success = True
-                game_count = 0
+                download_args.status.set("Downloading Color Ratings")
+                self.window.update()
+                # Refresh pair baselines on every premium update. A temporary
+                # ratings failure must not prevent downloading premium cards.
+                download_success, game_count = extractor.retrieve_17lands_color_ratings(all_time=True)
             else:
                 download_args.status.set("Downloading Color Ratings")
                 self.window.update()

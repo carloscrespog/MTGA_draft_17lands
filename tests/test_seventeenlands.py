@@ -314,3 +314,17 @@ def test_process_color_ratings_fallback_logic():
     # "GU" extracted from "Simic (GU)" and normalized to "UG"
     assert "UG" in ratings
     assert ratings["UG"] == 60.0
+
+
+def test_all_time_color_ratings_url():
+    from urllib.parse import urlsplit, parse_qs
+    with patch("src.seventeenlands.requests.get") as get:
+        get.return_value.json.return_value = []
+        Seventeenlands().download_color_ratings(
+            "FRA", "PremierDraft", "2026-01-01", "2026-10-17",
+            constants.LIMITED_USER_GROUP_ALL, all_time=True,
+        )
+    params = parse_qs(urlsplit(get.call_args.args[0]).query)
+    assert params["time_period"] == ["ALL_TIME"]
+    assert params["combine_splash"] == ["true"]
+    assert "start_date" not in params and "end_date" not in params

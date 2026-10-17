@@ -651,6 +651,23 @@ class Overlay(ScaledWindow):
             False,
         )
 
+        self.pair_signal_frame = tkinter.Frame(self.root)
+        self.pair_signal_label = Label(
+            self.pair_signal_frame, text="Pair Signals (P1/P3)",
+            style="MainSectionsBold.TLabel",
+        )
+        self.pair_signal_table = self._create_header(
+            "pair_signal_table", self.pair_signal_frame, 0,
+            self.fonts_dict["All.TableRow"],
+            {"PAIR": {"width": 0.50, "anchor": tkinter.W},
+             "SCORE": {"width": 0.50, "anchor": tkinter.CENTER}},
+            self.table_width, True, True, constants.TABLE_STYLE, False,
+        )
+
+        self.pair_signal_table._mana_cells = ManaCells(
+            self.pair_signal_table, ["PAIR"], max(12, self._scale_value(18))
+        )
+
         self.separator_frame_citation = Separator(self.root, orient="horizontal")
         title_label = Label(
             self.root, text="MTGA Draft 17Lands", style="MainSectionsBold.TLabel"
@@ -705,7 +722,11 @@ class Overlay(ScaledWindow):
         self.signal_label.pack(anchor="w")
         self.signal_table.pack(expand=True, fill="both")
 
-        footnote_label.grid(row=16, column=0, columnspan=2)
+        self.pair_signal_frame.grid(row=16, column=0, columnspan=2, sticky="nsew")
+        self.pair_signal_label.pack(anchor="w")
+        self.pair_signal_table.pack(expand=True, fill="both")
+
+        footnote_label.grid(row=17, column=0, columnspan=2)
 
         self.refresh_button.pack(expand=True, fill="both")
 
@@ -2125,14 +2146,23 @@ class Overlay(ScaledWindow):
             # Clear if draft is empty
             if not self.draft.retrieve_draft_history() or not self.set_metrics:
                 self.signal_table.config(height=0)
+                self.pair_signal_table.config(height=0)
+                for row in self.pair_signal_table.get_children():
+                    self.pair_signal_table.delete(row)
                 # Clear existing rows
                 for row in self.signal_table.get_children():
                     self.signal_table.delete(row)
                 return
 
             history = self.draft.retrieve_draft_history()
-            calculator = SignalCalculator(self.set_metrics)
+            calculator = SignalCalculator(
+                self.set_metrics, self.draft.set_data.get_color_ratings()
+            )
             total_scores = {c: 0.0 for c in constants.CARD_COLORS}
+            pair_totals = dict.fromkeys(calculator.PAIRS, 0.0)
+            card_stats = {}
+            for tier_list in self.tier_data.values():
+                card_stats.update(tier_list.card_stats.get("cards", {}))
 
             for entry in history:
                 pack_num = entry["Pack"]
@@ -2144,9 +2174,25 @@ class Overlay(ScaledWindow):
                 pick_num = entry["Pick"]
 
                 scores = calculator.calculate_pack_signals(cards, pick_num)
+                pair_scores = calculator.calculate_pack_pair_signals(cards, pick_num, card_stats)
+                for pair, score in pair_scores.items():
+                    pair_totals[pair] += score
 
                 for color, score in scores.items():
                     total_scores[color] += score
+
+            for row in self.pair_signal_table.get_children():
+                self.pair_signal_table.delete(row)
+            self.pair_signal_table.config(height=10)
+            for count, (pair, score) in enumerate(sorted(
+                pair_totals.items(), key=lambda item: item[1], reverse=True
+            )):
+                row_tag = self._identify_table_row_tag(
+                    self.configuration.settings.card_colors_enabled, list(pair), count
+                )
+                self.pair_signal_table.insert(
+                    "", index=count, values=(pair, f"{score:.1f}"), tag=(row_tag,)
+                )
 
             # Update Table
             for row in self.signal_table.get_children():
@@ -4152,6 +4198,7 @@ class Overlay(ScaledWindow):
         toggle_widget(self.stat_frame, self.deck_stats_checkbox_value.get())
         toggle_widget(self.stat_table, self.deck_stats_checkbox_value.get())
         toggle_widget(self.signal_frame, self.signals_checkbox_value.get())
+        toggle_widget(self.pair_signal_frame, self.signals_checkbox_value.get())
         toggle_widget(self.missing_frame, self.missing_cards_checkbox_value.get())
         toggle_widget(self.missing_table_frame, self.missing_cards_checkbox_value.get())
 

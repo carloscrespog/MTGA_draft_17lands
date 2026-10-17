@@ -505,3 +505,37 @@ def test_invalid_initial_export_leaves_no_dataset(local_set_extractor, tmp_path)
     local_set_extractor.combined_data["card_ratings"] = {}
     assert local_set_extractor.export_card_data() == ""
     assert set(tmp_path.iterdir()) == before
+
+
+@patch("src.seventeenlands.requests.get")
+def test_pair_baselines_persist_with_set_and_refresh(mock_get, local_set_extractor, tmp_path):
+    from src.signals import SignalCalculator
+    from unittest.mock import Mock
+
+    assert local_set_extractor.download_local_card_data(0)[0]
+    mock_get.return_value.json.return_value = [
+        {"is_summary": False, "short_name": "WU", "wins": 5800, "games": 10000},
+        {"is_summary": False, "short_name": "UB", "wins": 5300, "games": 10000},
+    ]
+    assert local_set_extractor.retrieve_17lands_color_ratings(all_time=True)[0]
+    filename = local_set_extractor.export_card_data()
+    assert filename
+    loaded = Dataset()
+    assert loaded.open_file(str(tmp_path / filename)) == Result.VALID
+    assert loaded.get_color_ratings() == {"WU": 58.0, "UB": 53.0}
+    assert loaded.get_card_ratings()
+
+    metrics = Mock()
+    metrics.get_metrics.return_value = (55.0, 0.0)
+    calculator = SignalCalculator(metrics, loaded.get_color_ratings())
+    cards = [{"name": "Card", "deck_colors": {"All Decks": {"ata": 2},
+                                               "WU": {"gihwr": 57}, "UB": {"gihwr": 57}}}]
+    scores = calculator.calculate_pack_pair_signals(cards, 5)
+    assert scores["WU"] == 0
+    assert scores["UB"] == 12
+
+    mock_get.return_value.json.return_value[0]["wins"] = 5600
+    assert local_set_extractor.retrieve_17lands_color_ratings(all_time=True)[0]
+    assert local_set_extractor.export_card_data() == filename
+    assert loaded.open_file(str(tmp_path / filename)) == Result.VALID
+    assert loaded.get_color_ratings()["WU"] == 56.0

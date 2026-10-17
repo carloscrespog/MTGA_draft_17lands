@@ -99,14 +99,14 @@ def test_add_set_premium_uses_premium_download_path():
     ):
         extractor = mock_extractor_cls.return_value
         extractor.download_premium_card_data.return_value = (True, "", 123)
+        extractor.retrieve_17lands_color_ratings.return_value = (True, 1000)
         extractor.export_card_data.return_value = "MSH_PremierDraft_Top_Data.json"
         window._setup_extractor = MagicMock()
         window._DownloadDatasetWindow__update_set_table = MagicMock()
 
         window._DownloadDatasetWindow__add_set(mock_args)
 
-    extractor.set_color_ratings.assert_called_once_with({})
-    extractor.retrieve_17lands_color_ratings.assert_not_called()
+    extractor.retrieve_17lands_color_ratings.assert_called_once_with(all_time=True)
     extractor.download_card_data.assert_not_called()
     extractor.download_premium_card_data.assert_called_once_with(0)
 

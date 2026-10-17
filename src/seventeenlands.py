@@ -88,10 +88,19 @@ class Seventeenlands:
         user_group,
         color_filter=None,
         threshold=COLOR_WIN_RATE_GAME_COUNT_THRESHOLD_DEFAULT,
+        all_time=False,
     ):
         url = self._build_color_ratings_url(
             set_code, draft, start_date, end_date, user_group
         )
+        if all_time:
+            from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+            parts = urlsplit(url)
+            params = dict(parse_qsl(parts.query))
+            params.pop("start_date", None)
+            params.pop("end_date", None)
+            params["time_period"] = "ALL_TIME"
+            url = urlunsplit(parts._replace(query=urlencode(params)))
         response = requests.get(url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         return self._process_color_ratings(
