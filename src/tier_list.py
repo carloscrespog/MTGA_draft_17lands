@@ -11,7 +11,7 @@ from src.scaled_window import ScaledWindow, identify_safe_coordinates
 from src.logger import create_logger
 from src.constants import GRADE_ORDER_DICT, LETTER_GRADE_NA
 from src.limited_levelups import (
-    TIER_URL_LLU, discover_tier_list_ids, llu_headers, normalize_set_code,
+    LLU_ORIGIN, TIER_URL_LLU, discover_tier_list_ids, llu_headers, normalize_set_code,
 )
 
 # Constants for tier list storage and API
@@ -53,11 +53,14 @@ class Rating(BaseModel):
     """Rating for a single card."""
     rating: str = ""
     comment: Optional[str] = None
+    buildaround: bool = False
+    synergy: bool = False
 
 class TierList(BaseModel):
     """Represents a tier list with metadata and card ratings."""
     meta: Meta = Meta()
     ratings: Dict[str, Rating] = {}
+    card_stats: dict = {}
 
     @classmethod
     def from_api(cls, url: str):
@@ -85,7 +88,9 @@ class TierList(BaseModel):
                     tier = LETTER_GRADE_NA
                 ratings[name] = Rating(
                     rating=tier,
-                    comment=card.get("comment", "")
+                    comment=card.get("comment", ""),
+                    buildaround=card.get("buildaround", False),
+                    synergy=card.get("synergy", False),
                 )
             return cls(meta=meta, ratings=ratings)
         except (requests.RequestException, ValueError, KeyError, TypeError) as e:
@@ -135,10 +140,26 @@ class TierList(BaseModel):
                     tier = tier.ljust(2) if isinstance(tier, str) else LETTER_GRADE_NA
                     if tier not in GRADE_ORDER_DICT:
                         tier = LETTER_GRADE_NA
-                    ratings[name] = Rating(rating=tier, comment=card.get("comment", ""))
+                    ratings[name] = Rating(
+                        rating=tier, comment=card.get("comment", ""),
+                        buildaround=card.get("buildaround", False),
+                        synergy=card.get("synergy", False),
+                    )
                 if not ratings:
                     raise ValueError(f"LLU returned no card ratings for {set_code}")
                 tier_lists.append(cls(meta=meta, ratings=ratings))
+            response = requests.get(
+                f"{LLU_ORIGIN}/api/card-stats/{set_code}", headers=headers, timeout=10
+            )
+            response.raise_for_status()
+            stats = response.json()
+            if (
+                not isinstance(stats, dict) or stats.get("set") != set_code
+                or not isinstance(stats.get("cards"), dict)
+            ):
+                raise ValueError(f"LLU returned invalid card stats for {set_code}")
+            for tier_list in tier_lists:
+                tier_list.card_stats = stats
             return tier_lists
         except (requests.RequestException, ValueError, KeyError, TypeError) as error:
             logger.error(f"Failed to fetch tier lists from Limited Level-Ups: {error}")
@@ -156,8 +177,8 @@ class TierList(BaseModel):
                 rating_value = v.get("rating", "")
                 if rating_value not in GRADE_ORDER_DICT:
                     rating_value = LETTER_GRADE_NA
-                ratings[k] = Rating(rating=rating_value, comment=v.get("comment"))
-            return cls(meta=meta, ratings=ratings)
+                ratings[k] = Rating(**{**v, "rating": rating_value})
+            return cls(meta=meta, ratings=ratings, card_stats=data.get("card_stats", {}))
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
             logger.error(f"Failed to load tier list from {file_path}: {e}")
             return None

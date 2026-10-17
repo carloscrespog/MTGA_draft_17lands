@@ -36,6 +36,7 @@ def otj_responses():
         response(text='const lists={OTJ:[{name:"Alex",uid:"' + ALEX_ID + '"},{name:"Marc",uid:"' + MARC_ID + '"}]};'),
         response(payload()),
         response(payload('LLU Marc')),
+        response({'set': 'OTJ', 'cards': {}}),
     ]
 
 
@@ -51,14 +52,16 @@ def test_from_limited_levelups_api_uses_discovered_url_and_referer():
         response(text='<script type="module" src="/assets/current.js"></script>'),
         response(text='const lists={HOB:"' + HOB_ID + '"};'),
         response(payload('Marc set review HOB tierlist', 'HOB')),
+        response({'set': 'HOB', 'cards': {}}),
     ]
     with patch('src.tier_list.requests.get', side_effect=responses) as get:
         tier_list = TierList.from_limited_levelups_api(' hob ')
 
     assert tier_list.meta.set == 'HOB'
     assert tier_list.ratings['Test Card'].rating == 'B '
-    assert len(get.call_args_list) == 3
-    assert get.call_args.args[0] == TIER_URL_LLU + HOB_ID
+    assert len(get.call_args_list) == 4
+    assert get.call_args_list[2].args[0] == TIER_URL_LLU + HOB_ID
+    assert get.call_args.args[0] == 'https://limitedlevelups.com/api/card-stats/HOB'
     assert get.call_args.kwargs['headers']['referer'] == 'https://limitedlevelups.com/tier-list/HOB'
 
 
@@ -154,7 +157,7 @@ def test_update_without_selected_filename_creates_stable_files(tmp_path):
     }
 
 
-@pytest.mark.parametrize('failed_stage', [0, 1, 2, 3])
+@pytest.mark.parametrize('failed_stage', [0, 1, 2, 3, 4])
 def test_network_failure_preserves_existing_files(tmp_path, failed_stage):
     selected = tmp_path / 'Tier_OTJ_existing.txt'
     selected.write_bytes(b'existing data')
@@ -178,7 +181,7 @@ def test_invalid_second_payload_preserves_existing_file(tmp_path, invalid):
     selected = tmp_path / 'Tier_OTJ_existing.txt'
     selected.write_bytes(b'existing data')
     responses = otj_responses()
-    responses[-1].json.return_value = invalid
+    responses[3].json.return_value = invalid
     with patch('src.tier_list.TIER_FOLDER', str(tmp_path)), patch(
         'src.tier_list.requests.get', side_effect=responses
     ):
@@ -232,3 +235,29 @@ def test_update_button_allows_otj_and_restores_controls(succeeds):
     assert window.update_callback.call_count == int(succeeds)
     assert window._TierWindow__update_tier_table.call_count == int(succeeds)
     assert ('updated' if succeeds else 'Failed') in window._status_text.set.call_args.args[0]
+
+
+def test_llu_stats_and_flags_survive_update_and_reload(tmp_path):
+    responses = otj_responses()
+    responses[2].json.return_value['ratings'][0].update(synergy=True, buildaround=True)
+    stats = {'set': 'OTJ', 'updatedAt': '2026-10-16', 'cards': {
+        'Test Card': {'pairs': {'UB': {'gihWr': 0.601, 'gihGames': 900},
+                                'BG': {'gihWr': None, 'gihGames': 100}}}}}
+    responses[4].json.return_value = stats
+    with patch('src.tier_list.TIER_FOLDER', str(tmp_path)), patch(
+        'src.tier_list.requests.get', side_effect=responses
+    ):
+        assert TierList.update_limited_levelups('OTJ')
+    tier = TierList.from_file(str(tmp_path / f'Tier_OTJ_{ALEX_ID}.txt'))
+    assert tier.ratings['Test Card'].synergy
+    assert tier.ratings['Test Card'].buildaround
+    assert tier.card_stats == stats
+
+
+def test_old_tier_files_default_to_no_llu_details(tmp_path):
+    filename = tmp_path / 'old.json'
+    filename.write_text(json.dumps({'ratings': {'Card': {'rating': 'B '}}}))
+    tier = TierList.from_file(str(filename))
+    assert tier.card_stats == {}
+    assert not tier.ratings['Card'].synergy
+    assert not tier.ratings['Card'].buildaround

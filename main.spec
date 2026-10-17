@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('assets/mana', 'assets/mana')],
     hiddenimports=['jaraco.text','platformdirs','importlib_metadata','zipp'],
     hookspath=[],
     hooksconfig={},

@@ -1,6 +1,7 @@
 """This module contains the functions and classes that are used for building and handling the application UI"""
 
 import tkinter
+from concurrent.futures import ThreadPoolExecutor
 from tkinter.ttk import (
     Progressbar,
     Treeview,
@@ -53,6 +54,7 @@ from src.card_logic import (
     copy_pack_to_clipboard,
 )
 from src.signals import SignalCalculator
+from src.mana_cells import ManaCells
 
 try:
     import win32api
@@ -1024,8 +1026,7 @@ class Overlay(ScaledWindow):
                 self.pack_table.insert(
                     "", index=count, iid=count, values=field_values, tag=(row_tag,)
                 )
-            self.pack_table.bind(
-                "<<TreeviewSelect>>",
+            self.__bind_card_tooltip(self.pack_table,
                 lambda event: self.__process_table_click(
                     event,
                     table=self.pack_table,
@@ -1113,8 +1114,7 @@ class Overlay(ScaledWindow):
                             values=field_values,
                             tag=(row_tag,),
                         )
-                    self.missing_table.bind(
-                        "<<TreeviewSelect>>",
+                    self.__bind_card_tooltip(self.missing_table,
                         lambda event: self.__process_table_click(
                             event,
                             table=self.missing_table,
@@ -1215,8 +1215,7 @@ class Overlay(ScaledWindow):
                 self.compare_table.insert(
                     "", index=count, iid=count, values=field_values, tag=(row_tag,)
                 )
-            self.compare_table.bind(
-                "<<TreeviewSelect>>",
+            self.__bind_card_tooltip(self.compare_table,
                 lambda event: self.__process_table_click(
                     event,
                     table=self.compare_table,
@@ -1367,8 +1366,7 @@ class Overlay(ScaledWindow):
                     self.taken_table.insert(
                         "", index=count, iid=count, values=field_values, tag=(row_tag,)
                     )
-                self.taken_table.bind(
-                    "<<TreeviewSelect>>",
+                self.__bind_card_tooltip(self.taken_table,
                     lambda event: self.__process_table_click(
                         event,
                         table=self.taken_table,
@@ -1429,8 +1427,7 @@ class Overlay(ScaledWindow):
                     ),
                     tag=(row_tag,),
                 )
-            self.suggester_table.bind(
-                "<<TreeviewSelect>>",
+            self.__bind_card_tooltip(self.suggester_table,
                 lambda event: self.__process_table_click(
                     event,
                     table=self.suggester_table,
@@ -3719,12 +3716,48 @@ class Overlay(ScaledWindow):
         except Exception as error:
             logger.error(error)
 
+    def __bind_card_tooltip(self, table, callback):
+        """Open on click; movement only keeps or dismisses the clicked row."""
+        previous = getattr(table, "_mana_cells", None)
+        if previous is not None:
+            previous.close()
+            table._mana_cells = None
+        if table in (getattr(self, "pack_table", None), getattr(self, "missing_table", None),
+                     getattr(self, "compare_table", None)):
+            columns = [f"Column{index}" for index in range(2, 8)
+                       if self.main_options_dict.get(getattr(self, f"column_{index}_selection").get())
+                       == constants.DATA_FIELD_TOP_COLOR]
+            if columns:
+                table._mana_cells = ManaCells(table, columns, max(12, self._scale_value(18)))
+        table.bind("<ButtonRelease-1>", callback)
+        table.bind("<Motion>", callback)
+        table.bind("<Leave>", lambda event: self.__close_card_tooltip())
+        self.__close_card_tooltip()
+
+    def __close_card_tooltip(self):
+        tooltip = getattr(self, "_card_tooltip", None)
+        if tooltip:
+            tooltip.close()
+        self._card_tooltip = None
+        self._tooltip_row = None
+
     def __process_table_click(
         self, event, table, card_list, selected_color, fields=None
     ):
-        """Creates the card tooltip when a table row is clicked"""
+        """Show details for the hovered or selected card row."""
         color_dict = {}
-        for item in table.selection():
+        item = table.identify_row(event.y)
+        if event.type == tkinter.EventType.Motion:
+            if not item or getattr(self, "_tooltip_row", None) != (table, item):
+                self.__close_card_tooltip()
+            return
+        if not item:
+            self.__close_card_tooltip()
+            return
+        items = [item]
+        self.__close_card_tooltip()
+        for item in items:
+            self._tooltip_row = (table, item)
             card_name = table.item(item, "value")[0]
             for card in card_list:
                 card_name = card_name if card_name[0] != "*" else card_name[1:]
@@ -3749,6 +3782,7 @@ class Overlay(ScaledWindow):
                                             constants.DATA_FIELD_DECK_COLORS
                                         ][color][k]
                         tier_info = {}
+                        llu_details = {}
                         if fields and self.tier_data:
                             for name, tier_list in self.tier_data.items():
                                 if (
@@ -3758,6 +3792,15 @@ class Overlay(ScaledWindow):
                                     tier_info[name] = tier_list.ratings[
                                         card_name
                                     ].comment
+
+                        for tier_list in self.tier_data.values():
+                            rating = tier_list.ratings.get(card_name)
+                            stats = tier_list.card_stats.get("cards", {}).get(card_name)
+                            if rating and (rating.synergy or rating.buildaround):
+                                llu_details["synergy"] = llu_details.get("synergy", False) or rating.synergy
+                                llu_details["buildaround"] = llu_details.get("buildaround", False) or rating.buildaround
+                            if stats:
+                                llu_details["stats"] = stats
 
                         # Get the top archetypes for this card
                         archetype_list = (
@@ -3783,7 +3826,7 @@ class Overlay(ScaledWindow):
                                 )
                                 archetype.append(rating[0]["results"][0])
 
-                        CreateCardToolTip(
+                        self._card_tooltip = CreateCardToolTip(
                             table,
                             event,
                             card[constants.DATA_FIELD_NAME],
@@ -3794,6 +3837,7 @@ class Overlay(ScaledWindow):
                             self.fonts_dict,
                             tier_info,
                             archetype_list,
+                            llu_details,
                         )
                     except Exception as error:
                         logger.error(error)
@@ -4134,7 +4178,45 @@ class Overlay(ScaledWindow):
 
 
 class CreateCardToolTip(ScaledWindow):
-    """Class that's used to create the card tooltip that appears when a table row is clicked"""
+    """Card details shown when hovering or selecting a table row."""
+
+    _image_executor = ThreadPoolExecutor(max_workers=4)
+    _image_cache = {}
+
+    @staticmethod
+    def _fetch_card_image(url):
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+        response.raise_for_status()
+        with Image.open(io.BytesIO(response.content)) as source:
+            return source.convert("RGB")
+
+    def _load_card_image(self, label, url, size):
+        cached = self._image_cache.get(url)
+        future = None if cached is not None else self._image_executor.submit(self._fetch_card_image, url)
+
+        def finish():
+            if self.tw is None:
+                return
+            if future is not None and not future.done():
+                self.widget.after(30, finish)
+                return
+            try:
+                original = cached if future is None else future.result()
+                if len(self._image_cache) >= 128:
+                    self._image_cache.clear()
+                self._image_cache[url] = original
+                image = original.copy()
+                image.thumbnail(size, Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(image, master=self.tw)
+                label.configure(image=photo, text="")
+                self.images.append(photo)
+                self.tw.update_idletasks()
+                self.position_near_cursor()
+            except Exception as error:
+                label.configure(text="Image unavailable")
+                logger.debug("Card image unavailable: %s", error)
+
+        finish()
 
     def __init__(
         self,
@@ -4148,18 +4230,19 @@ class CreateCardToolTip(ScaledWindow):
         fonts_dict,
         tier_info,
         top_archetypes,
+        llu_details=None,
     ):
         super().__init__()
         self.scale_factor = scale_factor
         self.fonts_dict = fonts_dict
-        self.waittime = 1  # miliseconds
+        self.waittime = 1  # Show stats immediately; images load in the background.
         self.widget = widget
         self.card_name = card_name
         self.color_dict = color_dict
         self.image = image
         self.images_enabled = images_enabled
-        self.widget.bind("<Leave>", self.__leave)
-        self.widget.bind("<ButtonPress-1>", self.__leave, add="+")
+        self.llu_details = llu_details or {}
+
         self.table_rows = 16
 
         self.id = None
@@ -4169,6 +4252,9 @@ class CreateCardToolTip(ScaledWindow):
         self.event = event
         self.images = []
         self.__enter()
+
+    def close(self):
+        self.__leave()
 
     def __enter(self, event=None):
         """Initiate creation of the tooltip widget"""
@@ -4199,6 +4285,8 @@ class CreateCardToolTip(ScaledWindow):
             tt_height = self._scale_value(450)
             # creates a toplevel window
             self.tw = tkinter.Toplevel(self.widget)
+            self.tw.withdraw()
+            self.tw.attributes("-alpha", 0.9)
             # Leaves only the label and removes the app window
             self.tw.wm_overrideredirect(True)
             if sys.platform == constants.PLATFORM_ID_OSX:
@@ -4224,27 +4312,21 @@ class CreateCardToolTip(ScaledWindow):
                 width = self._scale_value(280)
                 size = width, image_size_y
                 self.images = []
-                request_header = {"User-Agent": "Mozilla/5.0"}
                 for count, picture_url in enumerate(self.image):
-                    try:
-                        if picture_url:
-                            response = requests.get(
-                                picture_url, headers=request_header, timeout=5
-                            )
-                            im = Image.open(io.BytesIO(response.content))
-                            im.thumbnail(size, Image.Resampling.LANCZOS)
-                            image = ImageTk.PhotoImage(im)
-                            image_label = Label(tt_frame, image=image)
-                            image_label.grid(column=count, row=1, columnspan=1)
-                            self.images.append(image)
-                            column_offset += 1
-                            tt_width += width - self._scale_value(10)
-                    except Exception as error:
-                        logger.error(error)
+                    if not picture_url:
+                        continue
+                    image_frame = tkinter.Frame(tt_frame, width=width, height=image_size_y)
+                    image_frame.grid(column=count, row=1, rowspan=2, sticky="n")
+                    image_frame.grid_propagate(False)
+                    image_label = Label(image_frame, text="Loading image...")
+                    image_label.grid(row=0, column=0)
+                    self._load_card_image(image_label, picture_url, size)
+                    column_offset += 1
+                    tt_width += width
 
             arch_headers, arch_width, arch_data = self.__format_archetype_data()
 
-            if arch_data:
+            if arch_data and not self.llu_details.get("stats", {}).get("pairs"):
                 archetype_table = self._create_header(
                     "tooltip_table",
                     archetype_frame,
@@ -4333,6 +4415,63 @@ class CreateCardToolTip(ScaledWindow):
             )
 
             row_count = 3
+            details = self.llu_details
+            flags = []
+            if details.get("synergy"):
+                flags.append("\U0001f91d Synergy")
+            if details.get("buildaround"):
+                flags.append("\U0001f6e0\ufe0f Buildaround")
+            pairs = details.get("stats", {}).get("pairs", {})
+            pairs = sorted(
+                ((pair, stats["gihWr"]) for pair, stats in pairs.items()
+                 if stats.get("gihWr") is not None),
+                key=lambda entry: entry[1], reverse=True,
+            )
+            if details.get("stats", {}).get("pairs"):
+                mana_icons = {}
+                icon_size = max(12, self._scale_value(20))
+                icon_folder = path.join(path.dirname(path.dirname(__file__)), "assets", "mana")
+                for color in {color for pair, _ in pairs for color in pair}:
+                    try:
+                        with Image.open(path.join(icon_folder, f"{color}.png")) as icon:
+                            mana_icons[color] = ImageTk.PhotoImage(
+                                icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS),
+                                master=self.tw,
+                            )
+                        self.images.append(mana_icons[color])
+                    except OSError:
+                        # Keep the pair readable if a local asset is missing.
+                        pass
+                llu_frame = tkinter.LabelFrame(tt_frame, text="Deck GIHWR")
+                # Put the combined panel between the card image and detailed stats.
+                stats_frame.grid_configure(row=2, column=column_offset - 1, sticky="n")
+                llu_frame.grid(row=1, column=column_offset - 1, sticky="n", padx=4)
+                all_decks = self.color_dict.get(constants.FILTER_OPTION_ALL_DECKS, {}).get(
+                    constants.DATA_FIELD_GIHWR)
+                if all_decks is None:
+                    all_decks = details.get("stats", {}).get("gihWr")
+                    all_decks = all_decks * 100 if all_decks is not None else None
+                all_decks_text = f"{all_decks:.1f}%" if all_decks is not None else "N/A"
+                Label(llu_frame, text=f"All Decks    {all_decks_text}").grid(
+                    row=0, column=0, columnspan=2, pady=4)
+
+                for index, (pair, win_rate) in enumerate(pairs):
+                    cell = tkinter.Frame(llu_frame)
+                    cell.grid(row=1 + index, column=0, sticky="ew", padx=6, pady=3)
+                    colors = {"W": "#f8e7b9", "U": "#8ec3df", "B": "#aaa0b4",
+                              "R": "#ed927d", "G": "#98bf91"}
+                    for col, color in enumerate(pair):
+                        if color in mana_icons:
+                            Label(cell, image=mana_icons[color]).grid(row=0, column=col, padx=1)
+                        else:
+                            tkinter.Label(cell, text=color, bg=colors.get(color, "#cccccc"),
+                                          fg="#111111", width=2).grid(row=0, column=col)
+                    Label(cell, text=f"  {win_rate * 100:.1f}%").grid(row=0, column=2)
+                llu_frame.columnconfigure(0, weight=1)
+            if flags:
+                Label(tt_frame, text="   ".join(flags), font=("Segoe UI Emoji", 11)).grid(
+                    row=row_count, column=0, columnspan=column_offset, pady=3)
+                row_count += 1
             for name, comment in self.tier_info.items():
                 if not comment:
                     continue
@@ -4371,21 +4510,51 @@ class CreateCardToolTip(ScaledWindow):
                 column=0, row=row_count, columnspan=column_offset, sticky=tkinter.NSEW
             )
 
-            tt_width += self._scale_value(10)
-            location_x, location_y = identify_safe_coordinates(
-                self.tw,
-                tt_width,
-                tt_height,
-                self._scale_value(25),
-                self._scale_value(20),
-            )
-            self.tw.wm_geometry(f"+{location_x}+{location_y}")
-
             tt_frame.pack()
+            self.tw.update_idletasks()
+            self.position_near_cursor()
+            self.tw.deiconify()
 
             self.tw.attributes("-topmost", True)
         except Exception as error:
             logger.error(error)
+
+    def position_near_cursor(self):
+        """Place the popup on the cursor's monitor using its actual size."""
+        if self.tw is None:
+            return
+        pointer_x, pointer_y = self.widget.winfo_pointerxy()
+        width = self.tw.winfo_reqwidth()
+        height = self.tw.winfo_reqheight()
+        bounds = (0, 0, self.widget.winfo_screenwidth(), self.widget.winfo_screenheight())
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class MonitorInfo(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                            ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+            user32 = ctypes.windll.user32
+            monitor_from_point = user32.MonitorFromPoint
+            monitor_from_point.argtypes = [wintypes.POINT, wintypes.DWORD]
+            monitor_from_point.restype = wintypes.HANDLE
+            get_monitor_info = user32.GetMonitorInfoW
+            get_monitor_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
+            info = MonitorInfo()
+            info.cbSize = ctypes.sizeof(info)
+            monitor = monitor_from_point(wintypes.POINT(pointer_x, pointer_y), 2)
+            if get_monitor_info(monitor, ctypes.byref(info)):
+                rect = info.rcWork
+                bounds = (rect.left, rect.top, rect.right, rect.bottom)
+        left, top, right, bottom = bounds
+        gap = max(8, self._scale_value(16))
+        x = pointer_x + gap
+        if x + width > right:
+            x = pointer_x - gap - width
+        x = max(left, min(x, right - width))
+        y = max(top, min(pointer_y + gap, bottom - height))
+        self.tw.wm_geometry(f"+{x}+{y}")
 
     def __hide_tooltip(self):
         tw = self.tw

@@ -55,6 +55,8 @@ class CardResult:
                         selected_card["results"][count] = self.__process_tier(
                             card, option
                         )
+                    elif option == constants.DATA_FIELD_TOP_COLOR:
+                        selected_card["results"][count] = self.__process_top_color(card)
                     elif option == constants.DATA_FIELD_COLORS:
                         selected_card["results"][count] = self.__process_colors(card)
                     elif option == constants.DATA_FIELD_WHEEL:
@@ -87,6 +89,21 @@ class CardResult:
             logger.error(error)
 
         return result
+
+    def __process_top_color(self, card):
+        """Return the pair with the highest available GIHWR, independent of filters."""
+        name = card[constants.DATA_FIELD_NAME].replace("///", "//")
+        for tier in self.tier_data.values():
+            stats = tier.card_stats.get("cards", {}).get(name)
+            if stats is not None:
+                pairs = [(pair, value["gihWr"]) for pair, value in stats.get("pairs", {}).items()
+                         if len(pair) == 2 and value.get("gihWr") is not None]
+                return max(pairs, key=lambda entry: entry[1])[0] if pairs else ""
+        pairs = [(pair, value.get(constants.DATA_FIELD_GIHWR, 0))
+                 for pair, value in card.get(constants.DATA_FIELD_DECK_COLORS, {}).items()
+                 if len(pair) == 2 and set(pair) <= set("WUBRG")
+                 and value.get(constants.DATA_FIELD_GIHWR)]
+        return max(pairs, key=lambda entry: entry[1])[0] if pairs else ""
 
     def __process_colors(self, card):
         """Retrieve card colors based on color identity (includes kicker, abilities, etc.) or mana cost"""
