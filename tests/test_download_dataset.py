@@ -328,3 +328,49 @@ def test_first_download_saves_before_statistics_requests(
     assert args.progress["value"] == 100
     args.button.__setitem__.assert_called_with("state", "normal")
     warning.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "elapsed,busy,expected_state,expected_text,scheduled",
+    [
+        (0, False, "disabled", "Download cooldown: 01:00 remaining", True),
+        (59.5, False, "disabled", "Download cooldown: 00:01 remaining", True),
+        (60, False, "normal", "", False),
+        (61, True, "disabled", "", True),
+    ],
+)
+def test_download_cooldown(elapsed, busy, expected_state, expected_text, scheduled):
+    config = MagicMock()
+    config.card_data.last_check = 1000
+    window = DownloadDatasetWindow(MagicMock(), {}, 1.0, {}, config, auto_enter=False)
+    window.window = MagicMock()
+    window._download_in_progress = busy
+    window._cooldown_after_id = "previous-timer"
+    window._widget_refs = {
+        "add_button": {}, "premium_button": {}, "cooldown_text": MagicMock(),
+    }
+
+    with patch("src.download_dataset.datetime") as clock:
+        clock.now.return_value.timestamp.return_value = 1000 + elapsed
+        window._refresh_download_cooldown()
+
+    window.window.after_cancel.assert_called_once_with("previous-timer")
+    assert window._widget_refs["add_button"]["state"] == expected_state
+    assert window._widget_refs["premium_button"]["state"] == expected_state
+    window._widget_refs["cooldown_text"].set.assert_called_once_with(expected_text)
+    assert window.window.after.called == scheduled
+
+
+def test_close_download_window_cancels_cooldown():
+    window = DownloadDatasetWindow(MagicMock(), {}, 1.0, {}, MagicMock(), auto_enter=False)
+    dialog = MagicMock()
+    window._cooldown_after_id = "cooldown-timer"
+    window._download_in_progress = True
+
+    window._DownloadDatasetWindow__exit(dialog)
+
+    dialog.after_cancel.assert_called_once_with("cooldown-timer")
+    dialog.destroy.assert_called_once()
+    assert window._cooldown_after_id is None
+    assert not window._download_in_progress
+    assert window._widget_refs == {}

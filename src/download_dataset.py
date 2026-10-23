@@ -1,3 +1,4 @@
+import math
 import tkinter
 import tkinter.messagebox
 from dataclasses import dataclass
@@ -76,6 +77,9 @@ class DownloadDatasetWindow(ScaledWindow):
         self.update_event_files_callback = update_event_files_callback
         self._auto_add_set_ran = False  # Track if auto add_set has run
         self.configuration = configuration
+        self._cooldown_after_id = None
+        self._download_in_progress = False
+        self._widget_refs = {}
         if auto_enter:
             self.enter()
 
@@ -272,6 +276,12 @@ class DownloadDatasetWindow(ScaledWindow):
                 text="DOWNLOAD PREMIUM",
             )
             self._widget_refs["add_button"] = add_button
+            self._widget_refs["premium_button"] = premium_button
+            cooldown_text = tkinter.StringVar(self.root)
+            self._widget_refs["cooldown_text"] = cooldown_text
+            cooldown_label = Label(
+                self.window, textvariable=cooldown_text, style="Notes.TLabel", anchor="c"
+            )
 
             event_separator = Separator(self.window, orient="vertical")
             set_separator = Separator(self.window, orient="vertical")
@@ -284,6 +294,7 @@ class DownloadDatasetWindow(ScaledWindow):
             premium_button.grid(row=4, column=0, columnspan=16, sticky="nsew")
             progress.grid(row=5, column=0, columnspan=16, sticky="nsew")
             status_label.grid(row=6, column=0, columnspan=16, sticky="nsew")
+            cooldown_label.grid(row=7, column=0, columnspan=16, sticky="nsew")
 
             set_label.grid(row=2, column=0, sticky="nsew")
             set_entry.grid(row=2, column=1, sticky="nsew")
@@ -308,6 +319,7 @@ class DownloadDatasetWindow(ScaledWindow):
             self.__update_set_start_date(start_entry, set_value, sets)
             self.__update_event_format(event_entry, event_value, set_value, sets)
             status_text.set("")
+            self._refresh_download_cooldown()
             self.window.update()
 
             # If download_args was provided, populate widgets and auto-run add_set once
@@ -366,6 +378,11 @@ class DownloadDatasetWindow(ScaledWindow):
 
     def __exit(self, window):
         DownloadDatasetWindow._instance_open = False
+        if self._cooldown_after_id is not None:
+            window.after_cancel(self._cooldown_after_id)
+            self._cooldown_after_id = None
+        self._download_in_progress = False
+        self._widget_refs = {}
         window.destroy()
 
     def __update_set_start_date(self, start, selection, set_list, *_):
@@ -535,11 +552,7 @@ class DownloadDatasetWindow(ScaledWindow):
     def _rate_limit_check(self, current_time, args):
         time_difference = current_time - self.configuration.card_data.last_check
         if time_difference < DATASET_DOWNLOAD_RATE_LIMIT_SEC:
-            tkinter.messagebox.showinfo(
-                title="Download",
-                message="Rate limit reached.\n\n"
-                f"Please wait {int(DATASET_DOWNLOAD_RATE_LIMIT_SEC - time_difference)} seconds before trying again.",
-            )
+            self._set_download_buttons_state(args, "normal")
             return False
         confirm = tkinter.messagebox.askyesno(
             title="Download",
@@ -637,9 +650,32 @@ class DownloadDatasetWindow(ScaledWindow):
         logger.error(message_string)
 
     def _set_download_buttons_state(self, args, state):
+        self._download_in_progress = state == "disabled"
         args.button["state"] = state
         if args.extra_button:
             args.extra_button["state"] = state
+        self._refresh_download_cooldown()
+
+    def _refresh_download_cooldown(self):
+        """Keep both buttons disabled while downloading or waiting for cooldown."""
+        if not self._widget_refs:
+            return
+        if self._cooldown_after_id is not None:
+            self.window.after_cancel(self._cooldown_after_id)
+            self._cooldown_after_id = None
+        remaining = max(0, math.ceil(
+            self.configuration.card_data.last_check
+            + DATASET_DOWNLOAD_RATE_LIMIT_SEC - datetime.now().timestamp()
+        ))
+        self._widget_refs["cooldown_text"].set(
+            f"Download cooldown: {remaining // 60:02d}:{remaining % 60:02d} remaining"
+            if remaining else ""
+        )
+        state = "disabled" if remaining or self._download_in_progress else "normal"
+        self._widget_refs["add_button"]["state"] = state
+        self._widget_refs["premium_button"]["state"] = state
+        if remaining or self._download_in_progress:
+            self._cooldown_after_id = self.window.after(1000, self._refresh_download_cooldown)
 
     def __update_set_table(self, list_box, sets):
         """Updates the set list in the Set View table."""
