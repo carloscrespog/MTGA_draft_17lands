@@ -208,7 +208,8 @@ class Notifications:
                         start=dataset_info[3],
                         end=current_date,
                         game_count=game_count,
-                        color_ratings=color_ratings
+                        color_ratings=color_ratings,
+                        premium_download=True,
                     )
                     self.dataset_window.enter(dataset_args)
         except Exception as error:

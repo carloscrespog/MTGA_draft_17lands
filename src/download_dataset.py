@@ -50,6 +50,7 @@ class DatasetArgs:
     user_group: str
     game_count: int
     color_ratings: dict = None
+    premium_download: bool = False
 
 
 class DownloadDatasetWindow(ScaledWindow):
@@ -323,7 +324,8 @@ class DownloadDatasetWindow(ScaledWindow):
                 self._auto_add_set_ran = True
                 self.__add_set(
                     DownloadArgs(
-                        button=add_button,
+                        button=premium_button if dataset_args.premium_download else add_button,
+                        extra_button=add_button if dataset_args.premium_download else premium_button,
                         progress=progress,
                         list_box=self.list_box,
                         sets=sets,
@@ -337,6 +339,7 @@ class DownloadDatasetWindow(ScaledWindow):
                         game_count=dataset_args.game_count,
                         color_ratings=dataset_args.color_ratings,
                         enable_rate_limit=False,
+                        premium_download=dataset_args.premium_download,
                     )
                 )
 

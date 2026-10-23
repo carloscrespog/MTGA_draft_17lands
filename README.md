@@ -390,7 +390,7 @@ Upon startup, the application checks for updates to the most recently used datas
 **Behavior:**
 
 - A dialog box will appear with the message: "New data available for [Set Name]. Would you like to update your dataset?"
-- If the user clicks `Yes`, the application will download the updated dataset.
+- If the user clicks `Yes`, the application will update the dataset using the `DOWNLOAD PREMIUM` flow.
 - This feature is rate-limited to once every 24 hours.
 
 **Tip:** To disable update notifications, open the `Settings` menu and uncheck the `Enable Dataset Update Notifications` option.
