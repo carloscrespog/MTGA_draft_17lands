@@ -11,7 +11,8 @@ from src.scaled_window import ScaledWindow, identify_safe_coordinates
 from src.logger import create_logger
 from src.constants import GRADE_ORDER_DICT, LETTER_GRADE_NA
 from src.limited_levelups import (
-    LLU_ORIGIN, TIER_URL_LLU, discover_tier_list_ids, llu_headers, normalize_set_code,
+    LLU_ORIGIN, TIER_URL_LLU, discover_tier_list_ids, llu_headers, llu_set_code,
+    normalize_set_code,
 )
 
 # Constants for tier list storage and API
@@ -108,6 +109,7 @@ class TierList(BaseModel):
         """Discover and fetch every published LLU list for a set before saving any."""
         try:
             set_code = normalize_set_code(set_code)
+            remote_set_code = llu_set_code(set_code)
             tier_list_ids = discover_tier_list_ids(set_code)
             headers = llu_headers(set_code)
             tier_lists = []
@@ -116,7 +118,7 @@ class TierList(BaseModel):
                 response = requests.get(url, headers=headers, timeout=10)
                 response.raise_for_status()
                 data = response.json()
-                if not isinstance(data, dict) or data.get("expansion") != set_code:
+                if not isinstance(data, dict) or data.get("expansion") != remote_set_code:
                     raise ValueError(f"LLU returned a tier list for the wrong set ({set_code} expected)")
                 if not isinstance(data.get("ratings"), list):
                     raise ValueError(f"LLU returned invalid ratings for {set_code}")
@@ -149,12 +151,18 @@ class TierList(BaseModel):
                     raise ValueError(f"LLU returned no card ratings for {set_code}")
                 tier_lists.append(cls(meta=meta, ratings=ratings))
             response = requests.get(
-                f"{LLU_ORIGIN}/api/card-stats/{set_code}", headers=headers, timeout=10
+                f"{LLU_ORIGIN}/api/card-stats/{remote_set_code}", headers=headers, timeout=10
             )
-            response.raise_for_status()
-            stats = response.json()
+            if response.status_code == 404:
+                # Some LLU sets (currently Star Trek/TRK) publish tier lists
+                # before card statistics are available.  Ratings remain useful
+                # without the optional detail/colour statistics.
+                stats = {"set": remote_set_code, "cards": {}}
+            else:
+                response.raise_for_status()
+                stats = response.json()
             if (
-                not isinstance(stats, dict) or stats.get("set") != set_code
+                not isinstance(stats, dict) or stats.get("set") != remote_set_code
                 or not isinstance(stats.get("cards"), dict)
             ):
                 raise ValueError(f"LLU returned invalid card stats for {set_code}")

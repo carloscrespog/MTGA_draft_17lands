@@ -16,8 +16,8 @@ PAGE = 'https://limitedlevelups.com/tier-list/OTJ'
 ASSET = 'https://limitedlevelups.com/assets/index-new-hash.js'
 
 
-def response(data=None, text=''):
-    result = Mock(text=text)
+def response(data=None, text='', status_code=200):
+    result = Mock(text=text, status_code=status_code)
     result.json.return_value = data
     return result
 
@@ -63,6 +63,34 @@ def test_from_limited_levelups_api_uses_discovered_url_and_referer():
     assert get.call_args_list[2].args[0] == TIER_URL_LLU + HOB_ID
     assert get.call_args.args[0] == 'https://limitedlevelups.com/api/card-stats/HOB'
     assert get.call_args.kwargs['headers']['referer'] == 'https://limitedlevelups.com/tier-list/HOB'
+
+
+def test_star_trek_uses_trk_payloads_and_stats_but_saves_as_tla():
+    primary_id = '03a686ab050b42d5a62bce8902e7f0df'
+    alex_id = '5d052764d08f49238b8232f591b46507'
+    responses = [
+        response(text='<script type="module" src="/assets/current.js"></script>'),
+        response(text=(
+            'const primary={TRK:"' + primary_id + '"};'
+            'const graders={TRK:[{name:"Alex",uid:"' + alex_id + '"}]};'
+        )),
+        response(payload('Star Trek primary', 'TRK')),
+        response(payload('Star Trek Alex', 'TRK')),
+        response(text='No card stats for this set', status_code=404),
+    ]
+    with patch('src.tier_list.requests.get', side_effect=responses) as get:
+        tier_lists = TierList.from_limited_levelups_apis('TLA')
+
+    assert [tier.meta.set for tier in tier_lists] == ['TLA', 'TLA']
+    assert [tier.meta.label for tier in tier_lists] == ['Star Trek primary', 'Star Trek Alex']
+    assert [tier.card_stats for tier in tier_lists] == [
+        {'set': 'TRK', 'cards': {}}, {'set': 'TRK', 'cards': {}},
+    ]
+    assert [call.args[0] for call in get.call_args_list[2:]] == [
+        TIER_URL_LLU + primary_id,
+        TIER_URL_LLU + alex_id,
+        'https://limitedlevelups.com/api/card-stats/TRK',
+    ]
 
 
 def test_full_otj_update_fetches_both_lists_and_reuses_files(tmp_path):

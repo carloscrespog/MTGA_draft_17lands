@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from src.limited_levelups import discover_tier_list_ids
+from src.limited_levelups import discover_tier_list_ids, llu_set_code
 
 
 ORIGIN = "https://limitedlevelups.com"
@@ -59,6 +59,25 @@ def test_single_list_set_is_discovered_without_static_configuration():
     ) as get:
         assert discover_tier_list_ids("y24otj") == [PRIMARY_ID]
     assert get.call_args_list[0].args[0] == page
+
+
+def test_star_trek_uses_llu_trk_mapping_but_keeps_tla_page():
+    primary_id = "03a686ab050b42d5a62bce8902e7f0df"
+    alex_id = "5d052764d08f49238b8232f591b46507"
+    marc_id = "d13af031a76e4a868cf2d8aad3386e0a"
+    bundle = (
+        'const primary={TRK:"' + primary_id + '",TLA:"' + OTHER_ID + '"};'
+        'const graders={TRK:[{name:"Alex",uid:"' + alex_id
+        + '"},{name:"Marc",uid:"' + marc_id + '"}]};'
+    )
+    with patch(
+        "src.limited_levelups.requests.get",
+        side_effect=[response_with_text(HTML), response_with_text(bundle)],
+    ) as get:
+        assert discover_tier_list_ids("TLA") == [primary_id, alex_id, marc_id]
+
+    assert llu_set_code(" tla ") == "TRK"
+    assert get.call_args_list[0].args[0] == f"{ORIGIN}/tier-list/TLA"
 
 
 def test_discovery_only_returns_the_requested_sets_ids():

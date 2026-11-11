@@ -9,6 +9,10 @@ import requests
 
 LLU_ORIGIN = "https://limitedlevelups.com"
 TIER_URL_LLU = f"{LLU_ORIGIN}/api/tier-list/"
+# LLU occasionally publishes a set under a different code from Arena/17Lands.
+# Keep the public/local code unchanged and translate only LLU requests and bundle
+# lookups.  Star Trek is TLA in Arena and TRK on limitedlevelups.com.
+LLU_SET_CODE_ALIASES = {"TLA": "TRK"}
 LLU_HEADERS = {
     "accept": "*/*",
     "cache-control": "no-cache",
@@ -24,6 +28,12 @@ def normalize_set_code(set_code: str) -> str:
     if not re.fullmatch(r"[A-Z0-9]{2,10}", code):
         raise ValueError("Enter a valid set code for Limited Level-Ups")
     return code
+
+
+def llu_set_code(set_code: str) -> str:
+    """Return the code used by LLU for an Arena/17Lands set code."""
+    code = normalize_set_code(set_code)
+    return LLU_SET_CODE_ALIASES.get(code, code)
 
 
 def llu_headers(set_code: str) -> dict:
@@ -87,6 +97,7 @@ def _ids_from_bundle(source: str, set_code: str):
 def discover_tier_list_ids(set_code: str) -> list[str]:
     """Follow the set page's current module assets to its published tier lists."""
     set_code = normalize_set_code(set_code)
+    bundle_set_code = llu_set_code(set_code)
     page_url = f"{LLU_ORIGIN}/tier-list/{set_code}"
     headers = llu_headers(set_code)
     response = requests.get(page_url, headers=headers, timeout=10)
@@ -105,7 +116,7 @@ def discover_tier_list_ids(set_code: str) -> list[str]:
     for asset in assets:
         response = requests.get(asset, headers=headers, timeout=10)
         response.raise_for_status()
-        singles, graders = _ids_from_bundle(response.text, set_code)
+        singles, graders = _ids_from_bundle(response.text, bundle_set_code)
         single_ids.extend(singles)
         grader_ids.extend(graders)
 
